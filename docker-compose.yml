@@ -1,0 +1,26 @@
+services:
+  backend:
+    build: .
+    container_name: academy_backend
+    command: python backend/manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15
+    container_name: academy_db
+    environment:
+      POSTGRES_DB: academy_db
+      POSTGRES_USER: project_user
+      POSTGRES_PASSWORD: bayan123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
