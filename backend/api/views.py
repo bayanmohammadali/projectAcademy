@@ -1,0 +1,359 @@
+from rest_framework.decorators import APIView, action
+from rest_framework import generics, request
+from rest_framework.permissions import AllowAny
+
+from academic.signals import notify_students_and_mentors
+from .serializers import CourseNameSerializer, CourseOfferingNameSerializer, CurrentSemesterEnrollmentSerializer, RegisterSerializer, StudentSemesterSerializer, SupervisorCreateSerializer
+from django.contrib.auth import get_user_model
+from rest_framework.response import Response
+from rest_framework import status
+
+from rest_framework import viewsets
+from rest_framework.permissions import IsAuthenticated
+from .permissions import IsAdmin,IsSupervisor, IsStudent, IsMentor
+from .serializers import (
+    UniversitySerializer,
+    MajorSerializer,
+    AcademicYearSerializer,
+    NotificationSerializer,
+    SemesterSerializer,
+    CourseSerializer,
+    CourseOfferingSerializer,
+    SemesterNameSerializer,
+    EnrollmentSerializer,
+    GroupsSerializer,
+)
+from academic.models import AcademicYear, Semester, University
+from majors.models import Major
+from users.models import Notification, User
+from groups.models import Group
+from courses.models import Course, CourseOffering, Enrollment
+
+User = get_user_model()
+
+class RegisterView(generics.CreateAPIView):
+    queryset = User.objects.all()
+    serializer_class = RegisterSerializer
+    permission_classes = [AllowAny]
+
+
+
+class AcademicYearViewSet(viewsets.ModelViewSet):
+    queryset = AcademicYear.objects.all()
+    serializer_class = AcademicYearSerializer
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        academic_year = serializer.save()
+
+        return Response({
+            "message": "Academic year created successfully",
+            "academic_year": serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        return Response({
+            "message": "Academic year updated successfully",
+            "academic_year": response.data
+        })
+
+    def destroy(self, request, *args, **kwargs):
+        super().destroy(request, *args, **kwargs)
+        return Response({
+            "message": "Academic year deleted successfully"
+        })
+
+ 
+
+class UniversityViewSet(viewsets.ModelViewSet):
+    queryset = University.objects.all()
+    serializer_class = UniversitySerializer
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        university = serializer.save()
+
+        return Response({
+            "message": "University created successfully",
+            "university": serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        return Response({
+            "message": "University updated successfully",
+            "university": response.data
+        })
+
+    def destroy(self, request, *args, **kwargs):
+        super().destroy(request, *args, **kwargs)
+        return Response({
+            "message": "University deleted successfully"
+        })
+
+class MajorViewSet(viewsets.ModelViewSet):
+    queryset = Major.objects.all()
+    serializer_class = MajorSerializer
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        major = serializer.save()
+
+        return Response({
+            "message": "Major created successfully",
+            "major": serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        return Response({
+            "message": "Major updated successfully",
+            "major": response.data
+        })
+
+    def destroy(self, request, *args, **kwargs):
+        super().destroy(request, *args, **kwargs)
+        return Response({
+            "message": "Major deleted successfully"
+        })
+
+
+class SupervisorCreateView(generics.CreateAPIView):
+    queryset = User.objects.all()
+    serializer_class = SupervisorCreateSerializer
+    permission_classes = [IsAuthenticated, IsAdmin]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        supervisor = serializer.save()
+
+        return Response({
+            "message": "Supervisor created successfully",
+            "supervisor": serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+
+
+class SemesterViewSet(viewsets.ModelViewSet):
+    queryset = Semester.objects.all()
+    serializer_class = SemesterSerializer
+
+    def get_permissions(self):
+        if self.request.method in ["GET"]:
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), IsAdmin()]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        semester = serializer.save()
+        return Response({
+            "message": "Semester created successfully. Notifications sent to supervisors.",
+            "semester": serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    def perform_update(self, serializer):
+        # نحفظ الفصل
+        instance = serializer.save()
+
+        # إذا تم تفعيل هذا الفصل → نطفي كل الفصول الثانية
+        if instance.is_active:
+            Semester.objects.exclude(id=instance.id).update(is_active=False)
+
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        return Response({
+            "message": "Semester updated successfully",
+            "semester": response.data
+        })
+
+    def destroy(self, request, *args, **kwargs):
+        super().destroy(request, *args, **kwargs)
+        return Response({"message": "Semester deleted successfully"})
+
+    @action(detail=False, methods=['get'])
+    def names(self, request):
+        semesters = Semester.objects.all()
+        serializer = SemesterNameSerializer(semesters, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], url_path="latest")
+    def latest_semester(self, request):
+        latest = Semester.objects.filter(is_active=True).first()
+        if not latest:
+            return Response({"error": "No active semester found"}, status=404)
+
+        serializer = self.get_serializer(latest)
+        return Response(serializer.data)
+
+    
+
+class CourseViewSet(viewsets.ModelViewSet):
+    queryset = Course.objects.all()
+    serializer_class = CourseSerializer
+    permission_classes = [IsAdmin]
+    def get_permissions(self):
+        if self.request.method in ["GET"]:
+            return [IsAuthenticated()]   # أي مستخدم مسجّل
+        return [IsAuthenticated(), IsAdmin()]  # فقط الإدمن
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        course = serializer.save()
+        return Response({
+            "message": "Course created successfully",
+            "course": serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        return Response({
+            "message": "Course updated successfully",
+            "course": response.data
+        })
+
+    def destroy(self, request, *args, **kwargs):
+        super().destroy(request, *args, **kwargs)
+        return Response({
+            "message": "Course deleted successfully"
+        })
+    
+    @action(detail=False, methods=['get'])
+    def names(self, request):
+        courses = Course.objects.all()
+        serializer = CourseNameSerializer(courses, many=True)
+        return Response(serializer.data)
+
+
+    
+class NotificationViewSet(viewsets.ModelViewSet):
+    queryset = Notification.objects.all()
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        return Notification.objects.filter(user=user).order_by("-created_at")
+    
+    @action(detail=True, methods=['post'])
+    def mark_as_read(self, request, pk=None):
+        notification = self.get_object()
+        notification.is_read = True
+        notification.save()
+        return Response({"message": "Notification marked as read"}, status=status.HTTP_200_OK)
+
+
+class CourseOfferingViewSet(viewsets.ModelViewSet):
+    serializer_class = CourseOfferingSerializer
+    permission_classes = [IsAuthenticated, (IsSupervisor | IsAdmin | IsMentor | IsStudent)]
+
+    def get_queryset(self):
+        semester_id = self.kwargs.get("semester_id")
+        return CourseOffering.objects.filter(semester_id=semester_id)
+
+    def create(self, request, *args, **kwargs):
+        data = request.data
+        semester_id = self.kwargs.get("semester_id")
+
+        serializer = self.get_serializer(
+            data=data,
+            many=isinstance(data, list),
+            context={
+                "supervisor": request.user,
+                "semester_id": semester_id
+            }
+        )
+
+        serializer.is_valid(raise_exception=True)
+        offerings = serializer.save()
+
+        if isinstance(offerings, list):
+            for offering in offerings:
+                notify_students_and_mentors(offering)
+        else:
+            notify_students_and_mentors(offerings)
+
+        return Response({
+            "message": "Courses added successfully",
+            "count": len(offerings) if isinstance(offerings, list) else 1
+        }, status=status.HTTP_201_CREATED)
+    
+
+    @action(detail=False, methods=["get"])
+    def names(self, request, semester_id=None):
+        offerings = CourseOffering.objects.filter(semester_id=semester_id)
+        serializer = CourseOfferingNameSerializer(offerings, many=True)
+        return Response(serializer.data)
+
+
+
+class EnrollmentViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated, (IsStudent | IsMentor)]
+
+    def get_serializer_class(self):
+        if self.action in ["current", "current_semester_courses"]:
+            return CurrentSemesterEnrollmentSerializer
+        return EnrollmentSerializer
+
+
+    def get_queryset(self):
+        user = self.request.user
+        return Enrollment.objects.filter(student=user)   # ← التصحيح هنا
+
+    @action(detail=False, methods=["post"], url_path="register")
+    def register_course(self, request, semester_id=None):
+        serializer = self.get_serializer(
+            data=request.data,
+            many=isinstance(request.data, list),
+            context={
+                "user": request.user,
+                "semester_id": semester_id
+            }
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response({"message": "Enrolled successfully"}, status=201)
+
+    @action(detail=False, methods=["get"], url_path="current")
+    def current_semester_courses(self, request):
+        enrollments = Enrollment.objects.filter(student=request.user)
+
+        serializer = self.get_serializer(enrollments, many=True)
+        return Response(serializer.data)
+
+
+
+class StudentSemesterView(APIView):
+    permission_classes = [IsAuthenticated, (IsStudent | IsMentor)]
+
+    def get(self, request):
+
+        user = request.user
+
+        # إذا كان طالب
+        if user.role == "student":
+            semesters = Semester.objects.filter(
+                course_offerings__enrollments__student=user
+            ).distinct()
+
+        # إذا كان مينتور
+        elif user.role == "mentor":
+            semesters = Semester.objects.filter(
+                course_offerings__mentors=user
+            ).distinct()
+
+        else:
+            return Response({"error": "Unknown user role"}, status=400)
+
+        serializer = StudentSemesterSerializer(semesters, many=True)
+        return Response(serializer.data)

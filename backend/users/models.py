@@ -42,8 +42,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
     password = models.CharField(max_length=255)
 
-    first_name = models.CharField(max_length=100)
-    last_name = models.CharField(max_length=100)
+    first_name = models.CharField(max_length=100, blank=True)
+    last_name = models.CharField(max_length=100, blank=True)
     phone_number = models.CharField(max_length=20, null=True, blank=True)
     image = models.CharField(max_length=255, null=True, blank=True)
 
@@ -54,7 +54,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     request_status = models.CharField(max_length=50, default="pending")
 
     major = models.ForeignKey(Major, on_delete=models.SET_NULL, null=True, related_name="users")
-    university = models.ForeignKey(University, on_delete=models.SET_NULL, null=True, related_name="users")
+    university = models.ForeignKey(University, on_delete=models.SET_NULL, null=True, related_name="users", blank=True)
 
     created_at = models.DateTimeField(default=timezone.now)
 

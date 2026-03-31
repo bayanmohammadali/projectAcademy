@@ -1,5 +1,5 @@
 # استخدم Python الرسمي
-FROM python:3.12-slim
+FROM python:3.12
 
 # إعداد مجلد العمل داخل الحاوية
 WORKDIR /app

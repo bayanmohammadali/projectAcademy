@@ -27,6 +27,13 @@ class Semester(models.Model):
         on_delete=models.CASCADE,
         related_name="semesters"
     )
+    def save(self, *args, **kwargs):
+        # إذا هذا الفصل صار active → نطفي كل الفصول الثانية
+        if self.is_active:
+            Semester.objects.exclude(id=self.id).update(is_active=False)
+
+        super().save(*args, **kwargs)
+
 
     def __str__(self):
         return f"{self.name} - {self.academic_year.name}"

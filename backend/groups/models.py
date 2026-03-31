@@ -4,13 +4,13 @@ from django.db import models
 from django.conf import settings
 from courses.models import CourseOffering
 
-class StudyGroup(models.Model):
+class Group(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField()
     course_offering = models.ForeignKey(
         CourseOffering,
         on_delete=models.CASCADE,
-        related_name="study_groups"
+        related_name="groups"
     )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -21,7 +21,7 @@ class StudyGroup(models.Model):
 
 class GroupMember(models.Model):
     group = models.ForeignKey(
-        StudyGroup,
+        Group,
         on_delete=models.CASCADE,
         related_name="members"
     )
@@ -34,7 +34,7 @@ class GroupMember(models.Model):
 
 class GroupMessage(models.Model):
     group = models.ForeignKey(
-        StudyGroup,
+        Group,
         on_delete=models.CASCADE,
         related_name="messages"
     )
@@ -48,7 +48,7 @@ class GroupMessage(models.Model):
 
 class GroupFile(models.Model):
     group = models.ForeignKey(
-        StudyGroup,
+        Group,
         on_delete=models.CASCADE,
         related_name="files"
     )
