@@ -2,7 +2,7 @@ from django.urls import path
 from .views import  RegisterView, SupervisorCreateView
 from .views import CourseOfferingViewSet, EnrollmentViewSet
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from .views import StudentSemesterView
+from .views import StudentSemesterView, OfferingLectureView,OfferingLectureName, SupervisorNamesView
 
 
 urlpatterns = [
@@ -13,7 +13,7 @@ urlpatterns = [
 
      # إضافة مشرف
     path("supervisors/create/", SupervisorCreateView.as_view(), name="create-supervisor"),  #ادمن
-
+    path("supervisors/names/", SupervisorNamesView.as_view(), name="supervisor-names"), # عرض أسماء المشرفين
 
     # عرض المواد المتاحة في فصل معيّن (للسوبرفايزر/الطالب/المينتور)
     path(
@@ -37,6 +37,19 @@ urlpatterns = [
     path("student/semesters/", StudentSemesterView.as_view()),
 
 
+    # عرض المحاضرات في مادة معينة (للسوبرفايزر/الطالب/المينتور)
+    #واضافة محاضرة جديدة (للسوبرفايزر) 
+    path(
+        "course_offerings/<int:offering_id>/lectures/",
+        OfferingLectureView.as_view(),
+        name="course-offering-lectures"
+    ),
+    # عرض أسماء المحاضرات في مادة معينة (للسوبرفايزر/الطالب/المينتور)
+    path(
+        "course_offerings/<int:offering_id>/lectures/names/",
+        OfferingLectureName.as_view(),
+        name="course-offering-lecture-names"
+    ),
 
 
 ]
@@ -49,10 +62,12 @@ from.views import (
     NotificationViewSet,
     SemesterViewSet,
     CourseViewSet,
+    UserViewSet,
 
 )
 
 router = DefaultRouter()
+
 router.register("academic_years", AcademicYearViewSet, basename="academic_year")
 router.register("universities", UniversityViewSet, basename="university")
 router.register("majors", MajorViewSet, basename="major")
@@ -64,5 +79,7 @@ router.register("semesters", SemesterViewSet, basename="semester")
 router.register("courses", CourseViewSet, basename="course")
 #http://127.0.0.1:8000/api/enrollments/current/ - هون بطلعلي المواد الفصل الحالي اللي الطالب مسجل عليها
 router.register("enrollments", EnrollmentViewSet, basename="enrollments")
+
+router.register("users", UserViewSet, basename="users")
 
 urlpatterns += router.urls

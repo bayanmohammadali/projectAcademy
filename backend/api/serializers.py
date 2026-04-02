@@ -7,7 +7,7 @@ from majors.models import Major
 from users.models import User
 from groups.models import Group, GroupMember
 from users.models import Notification
-from courses.models import Course, CourseOffering, Enrollment
+from courses.models import Course, CourseOffering, Enrollment, Lecture
 
 
 
@@ -49,23 +49,52 @@ class RegisterSerializer(serializers.ModelSerializer):
         )
         return user
     
+
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ["id", "email", "first_name", "last_name", "role", "password"]
+        extra_kwargs = {
+            "password": {"write_only": True}
+        }
+
+    def create(self, validated_data):
+        password = validated_data.pop("password")
+        user = User(**validated_data)
+        user.set_password(password)
+        user.save()
+        return user
+
 class AcademicYearSerializer(serializers.ModelSerializer):
     class Meta:
         model = AcademicYear
         fields = "__all__"
 
+class AcademicYearNamesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AcademicYear
+        fields = ["id", "name"]
 
 class UniversitySerializer(serializers.ModelSerializer):
     class Meta:
         model = University
         fields = "__all__"
-
+        
+class UniversityNamesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = University
+        fields = ["id", "name"]
 
 class MajorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Major
         fields = "__all__"
 
+class MajorNamesSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Major
+        fields = ["id", "name"]
 
 class SupervisorCreateSerializer(serializers.ModelSerializer):
     class Meta:
@@ -231,3 +260,15 @@ class StudentSemesterSerializer(serializers.ModelSerializer):
         model = Semester
         fields = ["id", "name", "academic_year"]
 
+
+class LectureSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lecture
+        fields = "__all__"
+        read_only_fields = ["created_at"]
+
+class LectureNameSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lecture
+        fields = ["id", "title"]
+    

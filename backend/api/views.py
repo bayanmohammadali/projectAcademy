@@ -3,7 +3,7 @@ from rest_framework import generics, request
 from rest_framework.permissions import AllowAny
 
 from academic.signals import notify_students_and_mentors
-from .serializers import CourseNameSerializer, CourseOfferingNameSerializer, CurrentSemesterEnrollmentSerializer, RegisterSerializer, StudentSemesterSerializer, SupervisorCreateSerializer
+from .serializers import CourseNameSerializer, CourseOfferingNameSerializer, CurrentSemesterEnrollmentSerializer, RegisterSerializer, StudentSemesterSerializer, SupervisorCreateSerializer, SupervisorSerializer
 from django.contrib.auth import get_user_model
 from rest_framework.response import Response
 from rest_framework import status
@@ -13,21 +13,26 @@ from rest_framework.permissions import IsAuthenticated
 from .permissions import IsAdmin,IsSupervisor, IsStudent, IsMentor
 from .serializers import (
     UniversitySerializer,
+    UniversityNamesSerializer,
     MajorSerializer,
+    MajorNamesSerializer,
     AcademicYearSerializer,
+    AcademicYearNamesSerializer,
     NotificationSerializer,
     SemesterSerializer,
     CourseSerializer,
     CourseOfferingSerializer,
     SemesterNameSerializer,
     EnrollmentSerializer,
-    GroupsSerializer,
+    LectureSerializer,
+    LectureNameSerializer,
+    UserSerializer
 )
 from academic.models import AcademicYear, Semester, University
 from majors.models import Major
 from users.models import Notification, User
 from groups.models import Group
-from courses.models import Course, CourseOffering, Enrollment
+from courses.models import Course, CourseOffering, Enrollment, Lecture
 
 User = get_user_model()
 
@@ -37,6 +42,17 @@ class RegisterView(generics.CreateAPIView):
     permission_classes = [AllowAny]
 
 
+class UserViewSet(viewsets.ModelViewSet):
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+    permission_classes = [IsAuthenticated]
+
+    def create(self, request, *args, **kwargs):
+        # فقط الأدمن يضيف مستخدمين
+        if request.user.role != "admin":
+            return Response({"error": "Only admin can create users"}, status=403)
+
+        return super().create(request, *args, **kwargs)
 
 class AcademicYearViewSet(viewsets.ModelViewSet):
     queryset = AcademicYear.objects.all()
@@ -65,6 +81,12 @@ class AcademicYearViewSet(viewsets.ModelViewSet):
         return Response({
             "message": "Academic year deleted successfully"
         })
+    
+    def names(self, request):
+        academic_years = AcademicYear.objects.all()
+        serializer = AcademicYearNamesSerializer(academic_years, many=True)
+        return Response(serializer.data)
+    
 
  
 
@@ -95,6 +117,11 @@ class UniversityViewSet(viewsets.ModelViewSet):
         return Response({
             "message": "University deleted successfully"
         })
+    
+    def names(self, request):
+        universities = University.objects.all()
+        serializer = UniversityNamesSerializer(universities, many=True)
+        return Response(serializer.data)
 
 class MajorViewSet(viewsets.ModelViewSet):
     queryset = Major.objects.all()
@@ -123,6 +150,12 @@ class MajorViewSet(viewsets.ModelViewSet):
         return Response({
             "message": "Major deleted successfully"
         })
+    def names(self, request):
+        majors = Major.objects.all()
+        serializer = MajorNamesSerializer(majors, many=True)
+        return Response(serializer.data)
+
+
 
 
 class SupervisorCreateView(generics.CreateAPIView):
@@ -139,6 +172,12 @@ class SupervisorCreateView(generics.CreateAPIView):
             "message": "Supervisor created successfully",
             "supervisor": serializer.data
         }, status=status.HTTP_201_CREATED)
+
+class SupervisorNamesView(generics.ListAPIView):
+    queryset = User.objects.filter(role="supervisor")
+    serializer_class = SupervisorSerializer
+    permission_classes = [IsAuthenticated] 
+    
 
 
 
@@ -356,4 +395,39 @@ class StudentSemesterView(APIView):
             return Response({"error": "Unknown user role"}, status=400)
 
         serializer = StudentSemesterSerializer(semesters, many=True)
+        return Response(serializer.data)
+
+
+class OfferingLectureView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, offering_id):
+        # عرض المحاضرات للجميع (طلاب، مينتور، سوبرفايزر)
+        lectures = Lecture.objects.filter(course_offering_id=offering_id)
+        serializer = LectureSerializer(lectures, many=True)
+        return Response(serializer.data)
+
+    def post(self, request, offering_id):
+        user = request.user
+
+        # فقط السوبرفايزر يضيف محاضرات
+        if user.role != "supervisor":
+            return Response({"error": "Only supervisors can add lectures"}, status=403)
+
+        data = request.data.copy()
+        data["course_offering"] = offering_id
+
+        serializer = LectureSerializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response(serializer.data, status=201)
+    
+
+class OfferingLectureName(APIView):
+    permission_classes= [IsAuthenticated]
+
+    def get (self, request, offering_id):
+        lectures = Lecture.objects.filter(course_offering_id=offering_id)
+        serializer = LectureNameSerializer(lectures, many=True)
         return Response(serializer.data)
