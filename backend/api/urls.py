@@ -44,20 +44,16 @@ router.register("notifications", NotificationViewSet, basename="notification")
 # http://127.0.0.1:8000/api/semesters/latest/ - هون بطلعلي الفصل الدراسي الحالي اللي active
 #http://127.0.0.1:8000/api/semesters/names/ - هون بطلعلي اسماء كل الفصول الدراسية
 router.register("semesters", SemesterViewSet, basename="semester")
-
 #http://127.0.0.1:8000/api/courses/my_major/ #هون بطلعلي المواد يلي بتتبع تخصص معين 
 router.register("courses", CourseViewSet, basename="course")
-
-
 #http://127.0.0.1:8000/api/course_offerings/add_and_activate/ - هون بضيف مادة جديدة للفصل الدراسي الحالي وبفعلها مباشرة (للسوبرفايزر)
 router.register("course_offerings", CourseOfferingViewSet, basename="course_offering")
-
 #http://127.0.0.1:8000/api/enrollments/current/ - هون بطلعلي المواد الفصل الحالي اللي الطالب مسجل عليها
-
-router.register("enrollments", EnrollmentViewSet, basename="enrollments")
-
+router.register("enrollments", EnrollmentViewSet, basename="enrollments") # هون بطلعلي كل المواد اللي الطالب مسجل عليها في الفصل الدراسي الحالي, وكمان بقدر اسجل على مادة جديدة من هون
 # http://127.0.0.1:8000/api/users/admin_dashboard/ هون داش بورد تبع الادمن الاحصائيات عن المستخدمين بالتطبيق
-#http://127.0.0.1:8000/api/users/supervisor_dashboard/ لسا بدا تزبيط 
+#http://127.0.0.1:8000/api/users/supervisor_dashboard/  هون داش بورد تبع السوبرفايزر الاحصائيات عن المواد اللي بيشرف عليها والملخصات والطلبات تبع المينتورات  
 router.register("users", UserViewSet, basename="users")
+#_____________________________________________________________________________
+
 
 urlpatterns += router.urls

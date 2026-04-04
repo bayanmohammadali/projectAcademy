@@ -120,8 +120,9 @@ class UserViewSet(viewsets.ModelViewSet):
 
     # عدد الملخصات الخاصة باختصاص السوبرفايزر
         summaries_count = Summary.objects.filter(
-        lecture__course__major__name=major_name
+        lecture__course_offering__course__major__name=major
     ).count()
+
 
     # عدد طلبات المينتورات الخاصة باختصاص السوبرفايزر
         mentor_requests = MentorApplication.objects.filter(
