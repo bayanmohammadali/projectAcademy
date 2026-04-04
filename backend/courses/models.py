@@ -51,6 +51,7 @@ class CourseOffering(models.Model):
         related_name="supervised_courses"
     )
 
+    is_active = models.BooleanField(default=False) 
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -61,7 +62,7 @@ class CourseOffering(models.Model):
         is_new = self.pk is None
         super().save(*args, **kwargs)
         if is_new:
-            from groups.models import Group  # ← استيراد متأخر
+            from groups.models import Group  
             Group.objects.create(
                 name="Theoretical Group",
                 description="Group for theoretical discussions",

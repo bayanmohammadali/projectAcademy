@@ -1,3 +1,5 @@
+from os import major
+
 from rest_framework.decorators import APIView, action
 from rest_framework import generics, request
 from rest_framework.permissions import AllowAny
@@ -33,6 +35,9 @@ from majors.models import Major
 from users.models import Notification, User
 from groups.models import Group
 from courses.models import Course, CourseOffering, Enrollment, Lecture
+from majors.models import Major
+from summaries.models import Summary
+from mentors.models import MentorApplication
 
 User = get_user_model()
 
@@ -53,6 +58,84 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response({"error": "Only admin can create users"}, status=403)
 
         return super().create(request, *args, **kwargs)
+    
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        return Response({
+            "message": "User updated successfully",
+            "user": response.data 
+        })
+        
+    def destroy(self, request, *args, **kwargs):
+        if request.user.role != "admin":
+            return Response({"error": "Only admin can delete users"}, status=403)
+        return super().destroy(request, *args, **kwargs)
+
+
+    @action(detail=False, methods=["get"], url_path="students_and_mentors")
+    def students_and_mentors(self, request):
+        users = User.objects.filter(role__in=["student", "mentor"])
+        serializer = UserSerializer(users, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], url_path="dashboard_stats")
+    def admin_dashboard(self, request):
+        # عدد الطلاب + المينتورات
+        students_and_mentors = User.objects.filter(role__in=["student", "mentor"]).count()
+
+        # عدد الجامعات
+        universities = University.objects.count()
+
+        # عدد المواد
+        courses = Course.objects.count()
+
+     # عدد السوبرفايزرات
+        supervisors = User.objects.filter(role="supervisor").count()
+
+        return Response({
+            "students_and_mentors": students_and_mentors,
+            "universities": universities,
+            "courses": courses,
+            "supervisors": supervisors
+        })
+    
+    @action(detail=False, methods=["get"], url_path="supervisor_dashboard")
+    def supervisor_dashboard(self, request):
+        user = request.user
+
+    # تأكد أنه سوبرفايزر
+        if user.role != "supervisor":
+            return Response({"error": "Only supervisors can access this dashboard"}, status=403)
+
+    # اختصاص السوبرفايزر
+        major = user.major
+        if not major:
+            return Response({"error": "Supervisor has no major assigned"}, status=400)
+
+    # عدد المينتورات في نفس الاختصاص
+        mentors_count = User.objects.filter(role="mentor", major=major).count()
+
+    # عدد المواد التابعة للاختصاص
+        courses_count = Course.objects.filter(major=major).count()
+
+    # عدد الملخصات الخاصة باختصاص السوبرفايزر
+        summaries_count = Summary.objects.filter(
+        lecture__course__major__name=major_name
+    ).count()
+
+    # عدد طلبات المينتورات الخاصة باختصاص السوبرفايزر
+        mentor_requests = MentorApplication.objects.filter(
+            course__major=major
+        ).count()
+
+        return Response({
+            "mentors_count": mentors_count,
+            "courses_count": courses_count,
+            "summaries_count": summaries_count,
+            "mentor_requests": mentor_requests
+      })
+
+    
 
 class AcademicYearViewSet(viewsets.ModelViewSet):
     queryset = AcademicYear.objects.all()
@@ -150,6 +233,7 @@ class MajorViewSet(viewsets.ModelViewSet):
         return Response({
             "message": "Major deleted successfully"
         })
+    
     def names(self, request):
         majors = Major.objects.all()
         serializer = MajorNamesSerializer(majors, many=True)
@@ -157,9 +241,8 @@ class MajorViewSet(viewsets.ModelViewSet):
 
 
 
-
-class SupervisorCreateView(generics.CreateAPIView):
-    queryset = User.objects.all()
+class SupervisorViewSet(viewsets.ModelViewSet):
+    queryset = User.objects.filter(role="supervisor")
     serializer_class = SupervisorCreateSerializer
     permission_classes = [IsAuthenticated, IsAdmin]
 
@@ -172,14 +255,19 @@ class SupervisorCreateView(generics.CreateAPIView):
             "message": "Supervisor created successfully",
             "supervisor": serializer.data
         }, status=status.HTTP_201_CREATED)
-
-class SupervisorNamesView(generics.ListAPIView):
-    queryset = User.objects.filter(role="supervisor")
-    serializer_class = SupervisorSerializer
-    permission_classes = [IsAuthenticated] 
     
-
-
+    def update(self, request, *args, **kwargs):
+        response = super().update(request, *args, **kwargs)
+        return Response({
+            "message": "Supervisor updated successfully",
+            "supervisor": response.data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def names(self, request):
+        supervisors = User.objects.filter(role="supervisor")
+        serializer = SupervisorSerializer(supervisors, many=True)
+        return Response(serializer.data)
 
 class SemesterViewSet(viewsets.ModelViewSet):
     queryset = Semester.objects.all()
@@ -194,6 +282,10 @@ class SemesterViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         semester = serializer.save()
+        semester.is_active = True
+        semester.save()
+
+        Semester.objects.exclude(id=semester.id).update(is_active=False)
         return Response({
             "message": "Semester created successfully. Notifications sent to supervisors.",
             "semester": serializer.data
@@ -271,9 +363,17 @@ class CourseViewSet(viewsets.ModelViewSet):
         courses = Course.objects.all()
         serializer = CourseNameSerializer(courses, many=True)
         return Response(serializer.data)
-
-
     
+
+    # عرض المواد حسب التخصص (لما يختار الطالب تخصص معين، بطلع له المواد اللي بتتبع هذا التخصص)
+    @action(detail=False, methods=["get"], url_path="my_major")
+    def by_major(self, request):
+        major_id = request.user.major_id 
+        courses = Course.objects.filter(major_id=major_id)
+        serializer = CourseNameSerializer(courses, many=True)
+        return Response(serializer.data)
+
+
 class NotificationViewSet(viewsets.ModelViewSet):
     queryset = Notification.objects.all()
     serializer_class = NotificationSerializer
@@ -332,6 +432,35 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
         offerings = CourseOffering.objects.filter(semester_id=semester_id)
         serializer = CourseOfferingNameSerializer(offerings, many=True)
         return Response(serializer.data)
+    
+#تفعيل المادة من قبل السوبرفايزر (لما يضغط على تفعيل المادة، بتصير متاحة للطلاب والمينتورين)
+    @action(detail=False, methods=["post"], url_path="add_and_activate")
+    def add_and_activate(self, request):
+        course_id = request.data.get("course")
+        if not course_id:
+            return Response({"error": "Course ID is required"}, status=400)
+
+    # نجيب الفصل النشط
+        semester = Semester.objects.filter(is_active=True).first()
+        if not semester:
+            return Response({"error": "No active semester found"}, status=400)
+
+    # ننشئ CourseOffering
+        offering, created = CourseOffering.objects.get_or_create(
+            course_id=course_id,
+            semester=semester,
+            supervisor=request.user
+        )
+
+    # نفعل المادة مباشرة
+        offering.is_active = True
+        offering.save()
+
+        return Response({
+            "message": "Course added and activated successfully",
+            "offering_id": offering.id
+        })
+
 
 
 
@@ -346,29 +475,40 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        return Enrollment.objects.filter(student=user)   # ← التصحيح هنا
+        return Enrollment.objects.filter(student=user)   
 
     @action(detail=False, methods=["post"], url_path="register")
-    def register_course(self, request, semester_id=None):
-        serializer = self.get_serializer(
-            data=request.data,
-            many=isinstance(request.data, list),
-            context={
-                "user": request.user,
-                "semester_id": semester_id
-            }
+    def register_in_active_semester(self, request):
+        course_id = request.data.get("course")
+        if not course_id:
+            return Response({"error": "Course ID is required"}, status=400)
+
+    # 1) نجيب الفصل النشط
+        semester = Semester.objects.filter(is_active=True).first()
+        if not semester:
+            return Response({"error": "No active semester found"}, status=400)
+
+    # 2) نجيب الـ CourseOffering المفعّل
+        try:
+            offering = CourseOffering.objects.get(
+                course_id=course_id,
+                semester=semester,
+                is_active=True
+            )
+        except CourseOffering.DoesNotExist:
+            return Response({"error": "This course is not active in the current semester"}, status=400)
+
+    # 3) نسجّل الطالب
+        enrollment, created = Enrollment.objects.get_or_create(
+            student=request.user,
+            course_offering=offering
         )
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
 
-        return Response({"message": "Enrolled successfully"}, status=201)
+        return Response({
+            "message": "Course registered successfully",
+            "enrollment_id": enrollment.id
+        })
 
-    @action(detail=False, methods=["get"], url_path="current")
-    def current_semester_courses(self, request):
-        enrollments = Enrollment.objects.filter(student=request.user)
-
-        serializer = self.get_serializer(enrollments, many=True)
-        return Response(serializer.data)
 
 
 
