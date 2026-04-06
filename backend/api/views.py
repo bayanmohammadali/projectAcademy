@@ -28,7 +28,10 @@ from .serializers import (
     EnrollmentSerializer,
     LectureSerializer,
     LectureNameSerializer,
-    UserSerializer
+    UserSerializer,
+    GroupsSerializer,
+    GroupNameSerializer,
+
 )
 from academic.models import AcademicYear, Semester, University
 from majors.models import Major
@@ -509,6 +512,95 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             "message": "Course registered successfully",
             "enrollment_id": enrollment.id
         })
+    
+    @action(detail=False, methods=["get"], url_path="courses_by_semester/(?P<semester_id>[^/.]+)")
+    def courses_by_semester(self, request, semester_id=None):
+        user = request.user
+
+    # كل التسجيلات الخاصة بالطالب في هذا الفصل
+        enrollments = Enrollment.objects.filter(
+            student=user,
+            course_offering__semester_id=semester_id
+        )
+
+    # استخراج المواد
+        courses = [
+            {
+                "id": en.course_offering.course.id,
+                "name": en.course_offering.course.name,
+                "code": en.course_offering.course.code,
+                "major": en.course_offering.course.major.name
+            }
+         for en in enrollments
+        ]
+        return Response(courses)
+    
+    @action(detail=False, methods=["get"], url_path="lectures_by_course/(?P<course_id>[^/.]+)")
+    def lectures_by_course(self, request, course_id=None):
+        lectures = Lecture.objects.filter(
+            course_offering__course_id=course_id
+        )
+
+        data = [
+            {
+                "id": lec.id,
+                "title": lec.title,
+                "file": lec.file.url if lec.file else None
+            }
+            for lec in lectures
+        ]
+
+        return Response(data)
+    
+
+    @action(detail=False, methods=["get"], url_path="summaries_by_course/(?P<course_id>[^/.]+)")
+    def summaries_by_course(self, request, course_id=None):
+        summaries = Summary.objects.filter(
+            lecture__course_offering__course_id=course_id
+        )
+
+        data = [
+            {
+                "id": s.id,
+                "title": s.title,
+                "file": s.file.url if s.file else None
+            }
+            for s in summaries
+        ]
+
+        return Response(data)
+    
+    @action(detail=False, methods=["get"], url_path="mentors_by_course/(?P<course_id>[^/.]+)")
+    def mentors_by_course(self, request, course_id=None):
+        course = Course.objects.get(id=course_id)
+        mentors = course.mentors.all()
+
+        data = [
+            {
+                "id": m.id,
+                "name": m.full_name,
+                "email": m.email
+            }
+            for m in mentors
+        ]
+
+        return Response(data)
+
+    
+    @action(detail=False, methods=["get"], url_path="groups_by_course/(?P<course_id>[^/.]+)")
+    def groups_by_course(self, request, course_id=None):
+        groups = Group.objects.filter(
+            course_offering__course_id=course_id
+        )
+
+        data = GroupsSerializer(groups, many=True).data
+        return Response(data)
+
+
+
+
+
+    
 
 
 
@@ -572,3 +664,29 @@ class OfferingLectureName(APIView):
         lectures = Lecture.objects.filter(course_offering_id=offering_id)
         serializer = LectureNameSerializer(lectures, many=True)
         return Response(serializer.data)
+
+#_____________________________________________________________________________
+
+class GroupViewSet(viewsets.ModelViewSet):
+    queryset = Group.objects.all()
+    serializer_class = GroupsSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        return Group.objects.filter(members__user=user)
+
+
+    @action(detail=False, methods=["get"], url_path="by_course/(?P<course_id>[^/.]+)")
+    def groups_by_course(self, request, course_id=None):
+    # نجيب كل الـ CourseOffering التابعة للمادة
+        offerings = CourseOffering.objects.filter(course_id=course_id)
+
+    # نجيب كل المجموعات التابعة لهذه الـ offerings
+        groups = Group.objects.filter(course_offering__in=offerings)
+
+        serializer = GroupNameSerializer(groups, many=True)
+
+        return Response(serializer.data)
+
+
