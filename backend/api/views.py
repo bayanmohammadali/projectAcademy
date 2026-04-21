@@ -598,13 +598,6 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
 
 
-
-
-    
-
-
-
-
 class StudentSemesterView(APIView):
     permission_classes = [IsAuthenticated, (IsStudent | IsMentor)]
 
