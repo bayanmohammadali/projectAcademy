@@ -57,13 +57,12 @@ router.register("courses", CourseViewSet, basename="course")
 #http://127.0.0.1:8000/api/course_offerings/add_and_activate/ - هون بضيف مادة جديدة للفصل الدراسي الحالي وبفعلها مباشرة (للسوبرفايزر)
 router.register("course_offerings", CourseOfferingViewSet, basename="course_offering")
 
-#http://127.0.0.1:8000/api/enrollments/register/ - هون بسمح للطالب يسجل على مادة معينة في الفصل الدراسي الحالي
+#http://127.0.0.1:8000/api/enrollments/register/ - هون بسمح للطالب  اضافة مادة معينة في الفصل الدراسي الحالي
 #http://127.0.0.1:8000/api/enrollments/current/ - هون بطلعلي المواد الفصل الحالي اللي الطالب مسجل عليها
-#http://127.0.0.1:8000/api/enrollments/courses_by_semester/4مثال (id)/ - هون بطلعلي كل المواد اللي الطالب مسجل عليها في فصل دراسي معين
-#http://127.0.0.1:8000/api/enrollments/lectures_by_course/4مثال (id)/ - هون بطلعلي كل المحاضرات اللي متعلقة بمادة معينة
-#http://127.0.0.1:8000/api/enrollments/summaries_by_course/4مثال (id)/ - هون بطلعلي كل الملخصات اللي متعلقة بمادة معينة
-#http://127.0.0.1:8000/api/enrollments/mentors_by_course/4مثال (id)/ - هون بطلعلي كل المينتورات اللي متعلقة بمادة معينة
-#http://127.0.0.1:8000/api/enrollments/groups_by_course/4مثال (id)/ - هون بطلعلي كل المجموعات اللي متعلقة بمادة معينة
+#http://127.0.0.1:8000/api/enrollments/courses_by_semester/<semester_id>/ - هون بطلعلي كل المواد اللي الطالب مسجل عليها في فصل دراسي معين
+#http://127.0.0.1:8000/api/enrollments/lectures_by_course/<course_id>/ - هون بطلعلي كل المحاضرات اللي متعلقة بمادة معينة
+#http://127.0.0.1:8000/api/enrollments/summaries_by_course/<course_id>/ - هون بطلعلي كل الملخصات اللي متعلقة بمادة معينة
+#http://127.0.0.1:8000/api/enrollments/mentors_by_course/<course_id>/ - هون بطلعلي كل المينتورات اللي متعلقة بمادة معينة
 router.register("enrollments", EnrollmentViewSet, basename="enrollments") # هون بطلعلي كل المواد اللي الطالب مسجل عليها في الفصل الدراسي الحالي
 
 # http://127.0.0.1:8000/api/users/admin_dashboard/ هون داش بورد تبع الادمن الاحصائيات عن المستخدمين بالتطبيق
@@ -72,6 +71,11 @@ router.register("users", UserViewSet, basename="users")
 
 #_____________________________________________________________________________
 
+#chats:
+#http://127.0.0.1:8000/api/groups/<group_id>/messages/ - هون بطلعلي كل الرسائل اللي موجودة في المجموعات اللي الطالب مشارك فيها
+#http://127.0.0.1:8000/api/groups/<group_id>/send_message/ - هون الطالب ارسال رسالة ل مجموعة معينة
+#groups:
+#http://127.0.0.1:8000/api/groups/my_groups/<course_id>/ - هون بطلعلي كل المجموعات اللي الطالب مشارك فيها واللي بتتبع مادة معينة
 router.register("groups", GroupViewSet, basename="group") # هون بطلعلي كل المجموعات اللي الطالب مشارك فيهـا
 
 

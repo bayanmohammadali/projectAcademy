@@ -1,4 +1,3 @@
-from os import major
 
 from rest_framework.decorators import APIView, action
 from rest_framework import generics, request
@@ -36,7 +35,7 @@ from .serializers import (
 from academic.models import AcademicYear, Semester, University
 from majors.models import Major
 from users.models import Notification, User
-from groups.models import Group
+from groups.models import Group, GroupMessage, GroupFile, GroupMember
 from courses.models import Course, CourseOffering, Enrollment, Lecture
 from majors.models import Major
 from summaries.models import Summary
@@ -586,15 +585,6 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
         return Response(data)
 
-    
-    @action(detail=False, methods=["get"], url_path="groups_by_course/(?P<course_id>[^/.]+)")
-    def groups_by_course(self, request, course_id=None):
-        groups = Group.objects.filter(
-            course_offering__course_id=course_id
-        )
-
-        data = GroupsSerializer(groups, many=True).data
-        return Response(data)
 
 
 
@@ -681,5 +671,79 @@ class GroupViewSet(viewsets.ModelViewSet):
         serializer = GroupNameSerializer(groups, many=True)
 
         return Response(serializer.data)
+    
+    @action (detail=True, methods=["get"], url_path="messages")
+    def group_messages(self, request, pk=None):
+        group = self.get_object()
+        messages = group.messages.all().order_by("created_at")
+
+        data = [
+            {
+                "id": m.id,
+                "sender": f"{m.sender.first_name} {m.sender.last_name}",
+                "sender_id": m.sender.id,
+                "message": m.message,
+                "created_at": m.created_at
+            }
+            for m in messages
+        ]
+        return Response(data)
+    
+    @action(detail=True, methods=["post"], url_path="send_message")
+    def send_message(self, request, pk=None):
+        group = self.get_object()
+        user = request.user
+        message = request.data.get("message")
+
+        # 1) إذا الفصل مو Active → ممنوع إرسال
+        if not group.course_offering.is_active:
+            return Response(
+                {"detail": "This group is archived. You cannot send messages."},
+                status=403
+            )
 
 
+         # 2) تأكد إنو الطالب عضو بهالغروب
+        if not group.members.filter(user=user).exists():
+            return Response(
+                {"detail": "You are not a member of this group."},
+                status=403
+            )
+
+        if not message:
+            return Response({"detail": "Message is required."}, status=400)
+
+
+        msg = GroupMessage.objects.create(
+            group=group,
+            sender=user,
+            message=message
+        )
+
+        return Response({
+            "id": msg.id,
+            "sender": f"{msg.sender.first_name} {msg.sender.last_name}",
+            "sender_id": msg.sender.id,
+            "message": msg.message,
+            "created_at": msg.created_at
+        })
+    
+    @action(detail=False, methods=["get"], url_path="my_groups/(?P<course_id>[^/.]+)")
+    def my_groups(self, request, course_id=None):
+        user = request.user
+
+        groups = Group.objects.filter(
+            course_offering__course_id=course_id,
+            members__user=user
+        )
+        data = []
+        for g in groups:
+            data.append({
+                "id": g.id,
+                "name": g.name,
+                "description": g.description,
+                "is_active": g.course_offering.is_active,
+                "created_at": g.created_at,
+            })
+
+        return Response(data)

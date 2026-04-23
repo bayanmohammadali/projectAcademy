@@ -2,6 +2,7 @@ from django.db import models
 from majors.models import Major
 from academic.models import Semester, University
 from django.conf import settings
+
 class Course(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField()
@@ -58,24 +59,6 @@ class CourseOffering(models.Model):
     class Meta:
         unique_together = ("course", "semester")
 
-    def save(self, *args, **kwargs):
-        is_new = self.pk is None
-        super().save(*args, **kwargs)
-        if is_new:
-            from groups.models import Group  
-            Group.objects.create(
-                name="Theoretical Group",
-                description="Group for theoretical discussions",
-                course_offering=self, 
-                created_by=self.supervisor
-            )
-            Group.objects.create(
-                name="Practical Group",
-                description="Group for practical discussions",
-                course_offering=self,
-                created_by=self.supervisor
-            )
-
     def __str__(self):
         return f"{self.course.name} - {self.semester.name}"
     
@@ -94,11 +77,26 @@ class Enrollment(models.Model):
         related_name="enrollments"
     )
 
-
+    
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         unique_together = ("student", "course_offering")
+
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        super().save(*args, **kwargs)
+
+        if is_new:
+            # ضم الطالب لكل غروبات هاد الـ CourseOffering
+            groups = self.course_offering.groups.all()
+            for group in groups:
+                from groups.models import GroupMember
+                GroupMember.objects.get_or_create(
+                    group=group,
+                    user=self.student
+                )
 
     def __str__(self):
         return f"{self.student.email} enrolled in {self.course_offering.course.name}"
