@@ -51,13 +51,17 @@ router.register("notifications", NotificationViewSet, basename="notification")
 #http://127.0.0.1:8000/api/semesters/names/ - هون بطلعلي اسماء كل الفصول الدراسية
 router.register("semesters", SemesterViewSet, basename="semester")
 
-#http://127.0.0.1:8000/api/courses/my_major/ #هون بطلعلي المواد يلي بتتبع تخصص معين 
+#http://127.0.0.1:8000/api/courses/my_major/ هون بطلعلي المواد يلي بتتبع تخصص معين 
+#http://127.0.0.1:8000/api/courses/search/ - هون بطلعلي المواد اللي تطابق بحث معين
 router.register("courses", CourseViewSet, basename="course")
 
 #http://127.0.0.1:8000/api/course_offerings/add_and_activate/ - هون بضيف مادة جديدة للفصل الدراسي الحالي وبفعلها مباشرة (للسوبرفايزر)
+#http://127.0.01:8000/api/course_offerings/<offering_id>/deactivate/ - هون بوقف مادة معينة في الفصل الدراسي الحالي (للسوبرفايزر)
+#http://127.0.0.1:8000/api/course_offerings/ -عرض المواد المفعلة 
 router.register("course_offerings", CourseOfferingViewSet, basename="course_offering")
 
 #http://127.0.0.1:8000/api/enrollments/register/ - هون بسمح للطالب  اضافة مادة معينة في الفصل الدراسي الحالي
+#http://127.0.0.1:8000/api/enrollments/drop/ - هون بسمح للطالب حذف مادة معينة من الفصل الدراسي الحالي
 #http://127.0.0.1:8000/api/enrollments/current/ - هون بطلعلي المواد الفصل الحالي اللي الطالب مسجل عليها
 #http://127.0.0.1:8000/api/enrollments/courses_by_semester/<semester_id>/ - هون بطلعلي كل المواد اللي الطالب مسجل عليها في فصل دراسي معين
 #http://127.0.0.1:8000/api/enrollments/lectures_by_course/<course_id>/ - هون بطلعلي كل المحاضرات اللي متعلقة بمادة معينة

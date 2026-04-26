@@ -2,6 +2,7 @@
 from rest_framework.decorators import APIView, action
 from rest_framework import generics, request
 from rest_framework.permissions import AllowAny
+from django.db.models import Q
 
 from academic.signals import notify_students_and_mentors
 from .serializers import CourseNameSerializer, CourseOfferingNameSerializer, CurrentSemesterEnrollmentSerializer, RegisterSerializer, StudentSemesterSerializer, SupervisorCreateSerializer, SupervisorSerializer
@@ -375,6 +376,49 @@ class CourseViewSet(viewsets.ModelViewSet):
         courses = Course.objects.filter(major_id=major_id)
         serializer = CourseNameSerializer(courses, many=True)
         return Response(serializer.data)
+    
+
+    @action(detail=False, methods=["get"], url_path="search")
+    def search_courses(self, request):
+        query = request.query_params.get("q", "").strip()
+
+        if not query:
+            return Response({"error": "Search query is required"}, status=400)
+
+        user = request.user
+
+        # 1) نبدأ بكل المواد
+        courses = Course.objects.all()
+
+        # 2) فلترة حسب الدور
+        if user.role == "student":
+            # الطالب يشوف كل المواد (للتسجيل أو البحث)
+            pass
+
+        elif user.role == "mentor":
+            # يشوف المواد اللي هو mentor فيها فقط
+            courses = courses.filter(mentors=user)
+
+        elif user.role == "supervisor":
+            # يشوف المواد التابعة لاختصاصه
+            if user.major:
+                courses = courses.filter(major=user.major)
+
+        elif user.role == "admin":
+            # يشوف كل شي
+            pass
+
+        # 3) فلترة حسب البحث (اسم أو كود)
+        courses = courses.filter(
+            models.Q(name__icontains=query) |
+            models.Q(code__icontains=query)
+        )
+
+        serializer = CourseNameSerializer(courses, many=True)
+        return Response(serializer.data)
+
+
+
 
 
 class NotificationViewSet(viewsets.ModelViewSet):
@@ -399,8 +443,10 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, (IsSupervisor | IsAdmin | IsMentor | IsStudent)]
 
     def get_queryset(self):
-        semester_id = self.kwargs.get("semester_id")
-        return CourseOffering.objects.filter(semester_id=semester_id)
+        semester = Semester.objects.filter(is_active=True).first()
+        if not semester:
+            return CourseOffering.objects.none()
+        return CourseOffering.objects.filter(semester=semester)
 
     def create(self, request, *args, **kwargs):
         data = request.data
@@ -461,6 +507,19 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
 
         return Response({
             "message": "Course added and activated successfully",
+            "offering_id": offering.id
+        })
+
+
+    @action(detail=True, methods=["post"], url_path="deactivate")
+    def deactivate(self, request, pk=None):
+        offering = self.get_object()
+
+        offering.is_active = False
+        offering.save()
+
+        return Response({
+            "message": "Course offering deactivated successfully",
             "offering_id": offering.id
         })
 
@@ -584,6 +643,45 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         ]
 
         return Response(data)
+    
+    @action(detail=False, methods=["post"], url_path="drop")
+    def drop_course(self, request):
+        course_id = request.data.get("course")
+        if not course_id:
+            return Response({"error": "Course ID is required"}, status=400)
+
+        # 1) نجيب الفصل النشط
+        semester = Semester.objects.filter(is_active=True).first()
+        if not semester:
+            return Response({"error": "No active semester found"}, status=400)
+
+        # 2) نجيب الـ CourseOffering
+        try:
+            offering = CourseOffering.objects.get(
+                course_id=course_id,
+                semester=semester
+            )
+        except CourseOffering.DoesNotExist:
+            return Response({"error": "Course not found in this semester"}, status=404)
+
+        # 3) نحذف التسجيل
+        try:
+            enrollment = Enrollment.objects.get(
+                student=request.user,
+                course_offering=offering
+            )
+            enrollment.delete()
+        except Enrollment.DoesNotExist:
+            return Response({"error": "You are not enrolled in this course"}, status=400)
+
+        # 4) نحذف الطالب من الغروبات
+        GroupMember.objects.filter(
+            group__course_offering=offering,
+            user=request.user
+        ).delete()
+
+        return Response({"message": "Course dropped successfully"})
+
 
 
 
