@@ -28,6 +28,7 @@ from.views import (
     UserViewSet,
     SupervisorViewSet,
     GroupViewSet,
+    MentorApplicationViewSet,
 
 )
 
@@ -58,6 +59,8 @@ router.register("courses", CourseViewSet, basename="course")
 #http://127.0.0.1:8000/api/course_offerings/add_and_activate/ - هون بضيف مادة جديدة للفصل الدراسي الحالي وبفعلها مباشرة (للسوبرفايزر)
 #http://127.0.01:8000/api/course_offerings/<offering_id>/deactivate/ - هون بوقف مادة معينة في الفصل الدراسي الحالي (للسوبرفايزر)
 #http://127.0.0.1:8000/api/course_offerings/ -عرض المواد المفعلة 
+#http://127.0.0.1:8000/api/course_offerings/names/ - هون بطلعلي اسماء كل المواد المفعلة في الفصل الدراسي الحالي
+
 router.register("course_offerings", CourseOfferingViewSet, basename="course_offering")
 
 #http://127.0.0.1:8000/api/enrollments/register/ - هون بسمح للطالب  اضافة مادة معينة في الفصل الدراسي الحالي
@@ -81,6 +84,15 @@ router.register("users", UserViewSet, basename="users")
 #groups:
 #http://127.0.0.1:8000/api/groups/my_groups/<course_id>/ - هون بطلعلي كل المجموعات اللي الطالب مشارك فيها واللي بتتبع مادة معينة
 router.register("groups", GroupViewSet, basename="group") # هون بطلعلي كل المجموعات اللي الطالب مشارك فيهـا
-
+#____________________________________________________________
+#mentor
+#http://127.0.0.1:800/api/mentor_applications/apply/ - هون بسمح للطالب تقديم طلب مينتور لمادة معينة
+#http://127.0.0.1:800/api/mentor_applications/my_applications/ - الطالب يشوف طلباته
+#http://127.0.0.1:800/api/mentor_applications/pending/ - هون بطلعلي كل طلبات المينتورات اللي قدمت على مادة معينة واللي لسا ما انقبلت ولا رفضت (للسوبرفايزر)
+#http://127.0.0.1:800/api/mentor_applications/review/<application_id>/ - هون السوبرفايزر يقدر يوافق او يرفض طلب مينتور معين
+#http://127.0.0.1:800/api/mentor_applications/ai_score/<application_id>/ - هون السوبرفايزر يقدر يعطي طلب مينتور معين تقييم بالاعتماد على الذكاء الاصطناعي (للسوبرفايزر)
+#http://127.0.0.1:800/api/mentor_applications/approved_by_course/<course_id>/ - المينتورات الموافق عليهم لمادة معيّنة
+#http://127.0.0.1:800/api/mentor_applications/approved_by_mentor -كل المينتورات الموافق عليهم عند السوبرفايزر
+router.register("mentor_applications", MentorApplicationViewSet, basename="mentor_application") # هون بطلعلي كل طلبات المينتورات اللي قدمت على مادة معينة
 
 urlpatterns += router.urls

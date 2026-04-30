@@ -8,7 +8,7 @@ from users.models import User
 from groups.models import Group, GroupMember
 from users.models import Notification
 from courses.models import Course, CourseOffering, Enrollment, Lecture
-
+from mentors.models import MentorApplication
 
 
 User = get_user_model()
@@ -272,3 +272,9 @@ class LectureNameSerializer(serializers.ModelSerializer):
         model = Lecture
         fields = ["id", "title"]
     
+
+class MentorApplicationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MentorApplication
+        fields = "__all__"
+        read_only_fields = ["created_at", "status"]

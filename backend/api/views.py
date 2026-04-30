@@ -2,7 +2,8 @@
 from rest_framework.decorators import APIView, action
 from rest_framework import generics, request
 from rest_framework.permissions import AllowAny
-from django.db.models import Q
+from django.db.models import Q, Count
+from rest_framework.decorators import action
 
 from academic.signals import notify_students_and_mentors
 from .serializers import CourseNameSerializer, CourseOfferingNameSerializer, CurrentSemesterEnrollmentSerializer, RegisterSerializer, StudentSemesterSerializer, SupervisorCreateSerializer, SupervisorSerializer
@@ -31,6 +32,7 @@ from .serializers import (
     UserSerializer,
     GroupsSerializer,
     GroupNameSerializer,
+    MentorApplicationSerializer,
 
 )
 from academic.models import AcademicYear, Semester, University
@@ -446,7 +448,7 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
         semester = Semester.objects.filter(is_active=True).first()
         if not semester:
             return CourseOffering.objects.none()
-        return CourseOffering.objects.filter(semester=semester)
+        return CourseOffering.objects.filter(semester=semester,is_active=True)
 
     def create(self, request, *args, **kwargs):
         data = request.data
@@ -477,8 +479,8 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
     
 
     @action(detail=False, methods=["get"])
-    def names(self, request, semester_id=None):
-        offerings = CourseOffering.objects.filter(semester_id=semester_id)
+    def names(self, request):
+        offerings = CourseOffering.objects.filter(is_active=True)
         serializer = CourseOfferingNameSerializer(offerings, many=True)
         return Response(serializer.data)
     
@@ -522,6 +524,8 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
             "message": "Course offering deactivated successfully",
             "offering_id": offering.id
         })
+    
+    
 
 
 
@@ -565,6 +569,22 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             student=request.user,
             course_offering=offering
         )
+
+        student = request.user
+
+    
+        if student.supervisor is None:
+
+            supervisors=User.objects.filter(
+                role="supervisor",
+                specialization=student.specialization
+            ).annotate(
+                num_students=Count("students")
+            ).order_by("num_students")
+
+            if supervisors.exists():
+                student.supervisor = supervisors.first()
+                student.save()
 
         return Response({
             "message": "Course registered successfully",
@@ -636,7 +656,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         data = [
             {
                 "id": m.id,
-                "name": m.full_name,
+                "name": f"{m.first_name} {m.last_name}",
                 "email": m.email
             }
             for m in mentors
@@ -845,3 +865,164 @@ class GroupViewSet(viewsets.ModelViewSet):
             })
 
         return Response(data)
+
+
+class MentorApplicationViewSet(viewsets.ModelViewSet):
+    serializer_class = MentorApplicationSerializer
+    permission_classes = [IsAuthenticated]
+
+    # -----------------------------
+    # 1) فلترة الطلبات حسب الدور
+    # -----------------------------
+    def get_queryset(self):
+        user = self.request.user
+
+        # الطالب يشوف طلباته فقط
+        if user.role == "student":
+            return MentorApplication.objects.filter(student=user)
+
+        # السوبرفايزر يشوف طلبات طلابه فقط
+        if user.role == "supervisor":
+            return MentorApplication.objects.filter(student__supervisor=user)
+
+        # الادمن يشوف الكل
+        return MentorApplication.objects.all()
+
+    # -----------------------------
+    # 2) الطالب يقدم طلب
+    # -----------------------------
+    @action(detail=False, methods=["post"], url_path="apply")
+    def apply(self, request):
+        student = request.user
+        course_id = request.data.get("course")
+        motivation = request.data.get("motivation_text")
+        experience = request.data.get("experience_text")
+
+        if not course_id:
+            return Response({"error": "Course ID is required"}, status=400)
+
+        if MentorApplication.objects.filter(student=student, course_id=course_id).exists():
+            return Response({"error": "You already applied for this course"}, status=400)
+
+        application = MentorApplication.objects.create(
+            student=student,
+            course_id=course_id,
+            motivation_text=motivation,
+            experience_text=experience,
+            status="pending"
+        )
+
+        return Response({
+            "message": "Application submitted successfully",
+            "application_id": application.id
+        })
+
+    # -----------------------------
+    # 3) الطالب يشوف طلباته
+    # -----------------------------
+    @action(detail=False, methods=["get"], url_path="my_applications")
+    def my_applications(self, request):
+        apps = MentorApplication.objects.filter(student=request.user)
+        serializer = MentorApplicationSerializer(apps, many=True)
+        return Response(serializer.data)
+
+    # -----------------------------
+    # 4) السوبرفايزر يشوف الطلبات المعلّقة
+    # -----------------------------
+    @action(detail=False, methods=["get"], url_path="pending")
+    def pending_applications(self, request):
+        if request.user.role != "supervisor":
+            return Response({"error": "Only supervisors can view pending applications"}, status=403)
+
+        apps = MentorApplication.objects.filter(
+            student__supervisor=request.user,
+            status="pending"
+        )
+
+        serializer = MentorApplicationSerializer(apps, many=True)
+        return Response(serializer.data)
+
+    # -----------------------------
+    # 5) السوبرفايزر يراجع الطلب (قبول/رفض)
+    # -----------------------------
+    @action(detail=True, methods=["post"], url_path="review")
+    def review_application(self, request, pk=None):
+        if request.user.role != "supervisor":
+            return Response({"error": "Only supervisors can review applications"}, status=403)
+
+        app = self.get_object()
+        status_value = request.data.get("status")
+
+        if status_value not in ["approved", "rejected"]:
+            return Response({"error": "Status must be either 'approved' or 'rejected'"}, status=400)
+
+        app.status = status_value
+        app.save()
+
+        # إذا وافق → الطالب يصير مينتور
+        if status_value == "approved":
+            student = app.student
+            student.role = "mentor"
+            student.save()
+
+            app.course.mentors.add(student)
+
+        return Response({"message": f"Application {status_value} successfully"})
+
+    # -----------------------------
+    # 6) السوبرفايزر يعطي AI Score
+    # -----------------------------
+    @action(detail=True, methods=["post"], url_path="ai_score")
+    def ai_score_application(self, request, pk=None):
+        if request.user.role != "supervisor":
+            return Response({"error": "Only supervisors can score applications"}, status=403)
+
+        app = self.get_object()
+        score = request.data.get("score")
+
+        try:
+            score = float(score)
+            if not (0 <= score <= 100):
+                raise ValueError
+        except (ValueError, TypeError):
+            return Response({"error": "Score must be a number between 0 and 100"}, status=400)
+
+        app.ai_score = score
+        app.save()
+
+        return Response({"message": "AI score assigned successfully"})
+
+    # -----------------------------
+    # 7) المينتورات الموافق عليهم لمادة معيّنة
+    # -----------------------------
+    @action(detail=False, methods=["get"], url_path="approved_by_course/(?P<course_id>[^/.]+)")
+    def approved_by_course(self, request, course_id=None):
+        apps = MentorApplication.objects.filter(course_id=course_id, status="approved")
+        mentors = [app.student for app in apps]
+
+        data = [
+            {
+                "id": m.id,
+                "name": f"{m.first_name} {m.last_name}",
+                "email": m.email
+            }
+            for m in mentors
+        ]
+
+        return Response(data)
+
+    # -----------------------------
+    # 8) كل المينتورات الموافق عليهم عند هذا السوبرفايزر
+    # -----------------------------
+    @action(detail=False, methods=["get"], url_path="approved_by_mentor")
+    def approved_by_mentor(self, request):
+        if request.user.role != "supervisor":
+            return Response({"error": "Only supervisors can access this endpoint"}, status=403)
+
+        apps = MentorApplication.objects.filter(
+            status="approved",
+            student__supervisor=request.user
+        )
+
+        serializer = MentorApplicationSerializer(apps, many=True)
+        return Response(serializer.data)
