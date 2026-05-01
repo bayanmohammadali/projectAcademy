@@ -420,7 +420,7 @@ class CourseViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-
+ 
 
 
 class NotificationViewSet(viewsets.ModelViewSet):
