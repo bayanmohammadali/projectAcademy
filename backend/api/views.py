@@ -149,7 +149,10 @@ class UserViewSet(viewsets.ModelViewSet):
 class AcademicYearViewSet(viewsets.ModelViewSet):
     queryset = AcademicYear.objects.all()
     serializer_class = AcademicYearSerializer
-    permission_classes = [IsAuthenticated, IsAdmin]
+    def get_permissions(self):
+        if self.request.method in ["GET"]:
+            return [IsAuthenticated()]   # أي مستخدم مسجّل
+        return [IsAuthenticated(), IsAdmin()]  # فقط الإدمن
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -185,7 +188,10 @@ class AcademicYearViewSet(viewsets.ModelViewSet):
 class UniversityViewSet(viewsets.ModelViewSet):
     queryset = University.objects.all()
     serializer_class = UniversitySerializer
-    permission_classes = [IsAuthenticated, IsAdmin]
+    def get_permissions(self):
+        if self.request.method in ["GET"]:
+            return [IsAuthenticated()]   # أي مستخدم مسجّل
+        return [IsAuthenticated(), IsAdmin()]  # فقط الإدمن
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -218,7 +224,10 @@ class UniversityViewSet(viewsets.ModelViewSet):
 class MajorViewSet(viewsets.ModelViewSet):
     queryset = Major.objects.all()
     serializer_class = MajorSerializer
-    permission_classes = [IsAuthenticated, IsAdmin]
+    def get_permissions(self):
+        if self.request.method in ["GET"]:
+            return [IsAuthenticated()]   # أي مستخدم مسجّل
+        return [IsAuthenticated(), IsAdmin()]  # فقط الإدمن
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)

@@ -18,7 +18,7 @@ class MentorApplication(models.Model):
     motivation_text = models.TextField()
     experience_text = models.TextField()
 
-    status = models.CharField(max_length=50)  # pending / approved / rejected
+    status = models.CharField(max_length=50)  #  / approve / reject / Trial 
     ai_score = models.FloatField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
