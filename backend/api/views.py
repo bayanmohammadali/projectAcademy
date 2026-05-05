@@ -24,6 +24,8 @@ from .serializers import (
     NotificationSerializer,
     SemesterSerializer,
     CourseSerializer,
+    LectureSerializer,
+    LectureNameSerializer,
     CourseOfferingSerializer,
     SemesterNameSerializer,
     EnrollmentSerializer,
@@ -33,6 +35,7 @@ from .serializers import (
     GroupsSerializer,
     GroupNameSerializer,
     MentorApplicationSerializer,
+
 
 )
 from academic.models import AcademicYear, Semester, University
@@ -387,40 +390,70 @@ class CourseViewSet(viewsets.ModelViewSet):
         if not query:
             return Response({"error": "Search query is required"}, status=400)
 
-        user = request.user
-
-        # 1) نبدأ بكل المواد
+        # الكل يشوف كل المواد
         courses = Course.objects.all()
 
-        # 2) فلترة حسب الدور
-        if user.role == "student":
-            # الطالب يشوف كل المواد (للتسجيل أو البحث)
-            pass
-
-        elif user.role == "mentor":
-            # يشوف المواد اللي هو mentor فيها فقط
-            courses = courses.filter(mentors=user)
-
-        elif user.role == "supervisor":
-            # يشوف المواد التابعة لاختصاصه
-            if user.major:
-                courses = courses.filter(major=user.major)
-
-        elif user.role == "admin":
-            # يشوف كل شي
-            pass
-
-        # 3) فلترة حسب البحث (اسم أو كود)
+        # فلترة حسب البحث فقط
         courses = courses.filter(
-            models.Q(name__icontains=query) |
-            models.Q(code__icontains=query)
+            Q(name__icontains=query) |
+            Q(code__icontains=query)
         )
 
         serializer = CourseNameSerializer(courses, many=True)
         return Response(serializer.data)
 
 
+
  
+class LectureViewSet(viewsets.ModelViewSet):
+    queryset = Lecture.objects.all()
+    serializer_class = LectureSerializer
+    permission_classes = [IsSupervisor]
+    def get_permissions(self):
+        if self.request.method in ["GET"]:
+            return [IsAuthenticated()]  
+        return [IsAuthenticated(), IsSupervisor()]
+    
+    def get_queryset(self):
+        queryset = Lecture.objects.all()
+        return queryset
+
+    
+
+    def update(self, request, *args, **kwargs):
+        lecture = self.get_object()
+        serializer = LectureSerializer(lecture, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+
+        return Response({"message": "Lecture updated successfully"})
+    
+    def destroy(self, request, *args, **kwargs):
+        lecture = self.get_object()
+        lecture.delete()
+        return Response({"message": "Lecture deleted successfully"})
+    
+
+    @action(detail=False, methods=["get"], url_path="names")
+    def lecture_names(self, request):
+        lectures = self.get_queryset()
+        serializer = LectureNameSerializer(lectures, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=["get"], url_path="search")
+    def search_lectures(self, request):
+        keyword = request.query_params.get("q")
+
+        if not keyword:
+            return Response({"error": "Search keyword 'q' is required"}, status=400)
+
+        lectures = Lecture.objects.filter(title__icontains=keyword)
+
+        serializer = LectureSerializer(lectures, many=True)
+        return Response(serializer.data)
+
+
+
 
 
 class NotificationViewSet(viewsets.ModelViewSet):
@@ -525,6 +558,104 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
             "offering_id": offering.id
         })
     
+    @action(detail=True, methods=["post"], url_path="add_lecture")
+    def add_lecture(self, request, pk=None):
+        user = request.user
+
+        # فقط السوبرفايزر يضيف محاضرات
+        if user.role != "supervisor":
+            return Response({"error": "Only supervisors can add lectures"}, status=403)
+
+        # 1) نجيب الـ offering
+        try:
+            offering = CourseOffering.objects.get(id=pk)
+        except CourseOffering.DoesNotExist:
+            return Response({"error": "Course offering not found"}, status=404)
+
+        # 2) تجهيز البيانات
+        data = request.data.copy()
+        data["course_offering"] = offering.id
+
+        # 3) إنشاء المحاضرة
+        serializer = LectureSerializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        lecture = serializer.save()
+
+        # 4) الرد
+        return Response({
+            "message": "Lecture added successfully",
+            "lecture_id": lecture.id,
+            "title": lecture.title,
+            "file": lecture.file.url if lecture.file else None,
+            "course_offering": offering.id
+        }, status=201)
+    
+
+    @action(detail=True, methods=["get"], url_path="lectures")
+    def get_lectures(self, request, pk=None):
+        user = request.user
+
+        # 1) نجيب الـ offering
+        try:
+            offering = CourseOffering.objects.get(id=pk, is_active=True)
+        except CourseOffering.DoesNotExist:
+            return Response({"error": "Course offering not found"}, status=404)
+
+        # 2) الطالب والمينتور لازم يكونوا مسجلين بالمادة
+        if user.role in ["student", "mentor"]:
+            is_enrolled = Enrollment.objects.filter(
+                student=user,
+                course_offering=offering
+            ).exists()
+
+            if not is_enrolled:
+                return Response(
+                    {"error": "You are not enrolled in this course"},
+                    status=403
+                )
+
+        # 3) جلب المحاضرات
+        lectures = offering.lectures.all()
+
+        data = [
+            {
+                "id": lec.id,
+                "title": lec.title,
+                "file": lec.file.url if lec.file else None,
+                "created_at": lec.created_at
+            }
+            for lec in lectures
+        ]
+
+        return Response(data)
+    
+    @action(detail=True, methods=["delete"], url_path="remove_lecture/(?P<lecture_id>[^/.]+)")
+    def remove_lecture(self, request, pk=None, lecture_id=None):
+        user = request.user
+
+        # فقط السوبرفايزر يقدر يحذف محاضرات
+        if user.role != "supervisor":
+            return Response({"error": "Only supervisors can delete lectures"}, status=403)
+
+        # 1) تأكيد وجود الـ offering
+        try:
+            offering = CourseOffering.objects.get(id=pk)
+        except CourseOffering.DoesNotExist:
+            return Response({"error": "Course offering not found"}, status=404)
+
+        # 2) تأكيد وجود المحاضرة ضمن نفس الـ offering
+        try:
+            lecture = Lecture.objects.get(id=lecture_id, course_offering=offering)
+        except Lecture.DoesNotExist:
+            return Response({"error": "Lecture not found in this course offering"}, status=404)
+
+        # 3) حذف المحاضرة
+        lecture.delete()
+
+        return Response({"message": "Lecture removed successfully"}, status=200)
+
+
+
     
 
 
@@ -615,6 +746,19 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=["get"], url_path="lectures_by_course/(?P<course_id>[^/.]+)")
     def lectures_by_course(self, request, course_id=None):
+    
+        user = request.user
+        if user.role in ["student", "mentor"]:
+            is_enrolled = Enrollment.objects.filter(
+                student=user,
+                course_offering__course_id=course_id
+            ).exists()
+
+        if not is_enrolled:
+            return Response(
+                {"error": "You are not enrolled in this course"},
+                status=403
+            )
         lectures = Lecture.objects.filter(
             course_offering__course_id=course_id
         )
@@ -633,6 +777,20 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="summaries_by_course/(?P<course_id>[^/.]+)")
     def summaries_by_course(self, request, course_id=None):
+        user = request.user
+
+        if user.role in ["student", "mentor"]:
+            is_enrolled = Enrollment.objects.filter(
+                student=user,
+                course_offering__course_id=course_id
+            ).exists()
+
+            if not is_enrolled:
+                return Response(
+                    {"error": "You are not enrolled in this course"},
+                    status=403
+                )
+            
         summaries = Summary.objects.filter(
             lecture__course_offering__course_id=course_id
         )
@@ -650,6 +808,20 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=["get"], url_path="mentors_by_course/(?P<course_id>[^/.]+)")
     def mentors_by_course(self, request, course_id=None):
+        user = request.user
+
+        if user.role in ["student", "mentor"]:
+            is_enrolled = Enrollment.objects.filter(
+                student=user,
+                course_offering__course_id=course_id
+            ).exists()
+
+            if not is_enrolled:
+                return Response(
+                    {"error": "You are not enrolled in this course"},
+                    status=403
+                )
+            
         course = Course.objects.get(id=course_id)
         mentors = course.mentors.all()
 

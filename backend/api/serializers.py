@@ -138,6 +138,19 @@ class CourseNameSerializer(serializers.ModelSerializer):
         model = Course
         fields = ["id", "name"]
 
+
+class LectureSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lecture
+        fields = "__all__"
+        read_only_fields = ["created_at"]
+
+class LectureNameSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lecture
+        fields = ["id", "title"]
+
+
 class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification

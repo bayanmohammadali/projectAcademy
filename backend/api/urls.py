@@ -25,6 +25,7 @@ from.views import (
     NotificationViewSet,
     SemesterViewSet,
     CourseViewSet,
+    LectureViewSet,
     UserViewSet,
     SupervisorViewSet,
     GroupViewSet,
@@ -60,8 +61,16 @@ router.register("courses", CourseViewSet, basename="course")
 #http://127.0.01:8000/api/course_offerings/<offering_id>/deactivate/ - هون بوقف مادة معينة في الفصل الدراسي الحالي (للسوبرفايزر)
 #http://127.0.0.1:8000/api/course_offerings/ -عرض المواد المفعلة 
 #http://127.0.0.1:8000/api/course_offerings/names/ - هون بطلعلي اسماء كل المواد المفعلة في الفصل الدراسي الحالي
+#http://127.0.0.1:8000/api/course_offerings/<offering_id>/add_lecture/ - هون بضيف محاضرة ل مادة معينة
+#http://127.0.0.1:8000/api/course_offerings/<offering_id>/remove_lecture/<lecture_id>/ - هون بحذف محاضرة من مادة معينة
+#http://127.0.0.1:8000/api/course_offerings/<offering_id>/lectures/ - هون بطلعلي كل المحاضرات اللي بتتبع مادة معينة في الفصل الدراسي الحالي
 
 router.register("course_offerings", CourseOfferingViewSet, basename="course_offering")
+
+
+#http://127.0.0.1:8000/api/lectures/search/ - هون بطلعلي المحاضرات اللي تطابق بحث معين
+router.register("lectures", LectureViewSet, basename="lecture") 
+
 
 #http://127.0.0.1:8000/api/enrollments/register/ - هون بسمح للطالب  اضافة مادة معينة في الفصل الدراسي الحالي
 #http://127.0.0.1:8000/api/enrollments/drop/ - هون بسمح للطالب حذف مادة معينة من الفصل الدراسي الحالي
