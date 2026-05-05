@@ -151,7 +151,7 @@ class AcademicYearViewSet(viewsets.ModelViewSet):
     serializer_class = AcademicYearSerializer
     def get_permissions(self):
         if self.request.method in ["GET"]:
-            return [IsAuthenticated()]   # أي مستخدم مسجّل
+            return [AllowAny()]   # أي مستخدم مسجّل
         return [IsAuthenticated(), IsAdmin()]  # فقط الإدمن
 
     def create(self, request, *args, **kwargs):
@@ -190,7 +190,7 @@ class UniversityViewSet(viewsets.ModelViewSet):
     serializer_class = UniversitySerializer
     def get_permissions(self):
         if self.request.method in ["GET"]:
-            return [IsAuthenticated()]   # أي مستخدم مسجّل
+            return [AllowAny()]   # أي مستخدم مسجّل
         return [IsAuthenticated(), IsAdmin()]  # فقط الإدمن
 
     def create(self, request, *args, **kwargs):
@@ -226,7 +226,7 @@ class MajorViewSet(viewsets.ModelViewSet):
     serializer_class = MajorSerializer
     def get_permissions(self):
         if self.request.method in ["GET"]:
-            return [IsAuthenticated()]   # أي مستخدم مسجّل
+            return [AllowAny()]   # أي مستخدم مسجّل
         return [IsAuthenticated(), IsAdmin()]  # فقط الإدمن
 
     def create(self, request, *args, **kwargs):
