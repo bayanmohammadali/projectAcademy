@@ -293,7 +293,7 @@ class SemesterViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.request.method in ["GET"]:
-            return [AllowAny()]
+            return [IsAuthenticated()]
         return [IsAuthenticated(), IsAdmin()]
 
     def create(self, request, *args, **kwargs):
@@ -350,7 +350,7 @@ class CourseViewSet(viewsets.ModelViewSet):
     serializer_class = CourseSerializer
     def get_permissions(self):
         if self.request.method in ["GET"]:
-            return [AllowAny()]   # أي مستخدم مسجّل
+            return [IsAuthenticated()]   # أي مستخدم مسجّل
         return [IsAuthenticated(), IsAdmin()]  # فقط الإدمن
 
     def create(self, request, *args, **kwargs):
