@@ -98,6 +98,10 @@ router.register("groups", GroupViewSet, basename="group") # هون بطلعلي 
 #http://127.0.0.1:800/api/mentor_applications/apply/ - هون بسمح للطالب تقديم طلب مينتور لمادة معينة
 #http://127.0.0.1:800/api/mentor_applications/my_applications/ - الطالب يشوف طلباته
 #http://127.0.0.1:800/api/mentor_applications/pending/ - هون بطلعلي كل طلبات المينتورات اللي قدمت على مادة معينة واللي لسا ما انقبلت ولا رفضت (للسوبرفايزر)
+#http://127.0.0.1:800/api/mentor_applications/<application_id>/details/ - هون بطلعلي تفاصيل طلب مينتور معين (للسوبرفايزر)
+
+
+
 #http://127.0.0.1:800/api/mentor_applications/review/<application_id>/ - هون السوبرفايزر يقدر يوافق او يرفض طلب مينتور معين
 #http://127.0.0.1:800/api/mentor_applications/ai_score/<application_id>/ - هون السوبرفايزر يقدر يعطي طلب مينتور معين تقييم بالاعتماد على الذكاء الاصطناعي (للسوبرفايزر)
 #http://127.0.0.1:800/api/mentor_applications/approved_by_course/<course_id>/ - المينتورات الموافق عليهم لمادة معيّنة

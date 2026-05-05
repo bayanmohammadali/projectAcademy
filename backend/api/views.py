@@ -3,13 +3,13 @@ from rest_framework.decorators import APIView, action
 from rest_framework import generics, request
 from rest_framework.permissions import AllowAny
 from django.db.models import Q, Count
-from rest_framework.decorators import action
-
+from rest_framework.decorators import action 
 from academic.signals import notify_students_and_mentors
 from .serializers import CourseNameSerializer, CourseOfferingNameSerializer, CurrentSemesterEnrollmentSerializer, RegisterSerializer, StudentSemesterSerializer, SupervisorCreateSerializer, SupervisorSerializer
 from django.contrib.auth import get_user_model
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
@@ -53,6 +53,18 @@ class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
+
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        user = User.objects.get(id=response.data["id"])
+
+        refresh = RefreshToken.for_user(user)
+
+        return Response({
+            "user": response.data,
+            "refresh": str(refresh),
+            "access": str(refresh.access_token),
+        })
 
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -1092,6 +1104,57 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
             status="pending"
         )
 
+        file1 = request.FILES.get("file1")
+        file2 = request.FILES.get("file2")
+
+        # إعدادات التحقق
+        MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB
+        allowed_types = ["application/pdf", "image/jpeg", "image/png"]
+
+        # دالة للتحقق من الملف
+        def validate_file(f):
+            # حجم الملف
+            if f.size > MAX_FILE_SIZE:
+                return "File too large (max 25MB)"
+
+            # نوع الملف
+            if f.content_type not in allowed_types:
+                return "Invalid file type"
+
+            # التحقق من تلف الملف
+            if f.content_type == "application/pdf":
+                from PyPDF2 import PdfReader
+                try:
+                    PdfReader(f)
+                except:
+                    return "PDF file is corrupted"
+
+            if f.content_type in ["image/jpeg", "image/png"]:
+                from PIL import Image
+                try:
+                    Image.open(f).verify()
+                except:
+                    return "Image file is corrupted"
+
+            return None
+
+        # التحقق من file1
+        if file1:
+            error = validate_file(file1)
+            if error:
+                return Response({"error": f"file1: {error}"}, status=400)
+            application.file1 = file1
+
+        # التحقق من file2
+        if file2:
+            error = validate_file(file2)
+            if error:
+                return Response({"error": f"file2: {error}"}, status=400)
+            application.file2 = file2
+
+        application.save()
+
+
         return Response({
             "message": "Application submitted successfully",
             "application_id": application.id
@@ -1110,17 +1173,64 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     # 4) السوبرفايزر يشوف الطلبات المعلّقة
     # -----------------------------
     @action(detail=False, methods=["get"], url_path="pending")
-    def pending_applications(self, request):
-        if request.user.role != "supervisor":
+    def pending(self, request):
+        user = request.user
+
+        if user.role != "supervisor":
             return Response({"error": "Only supervisors can view pending applications"}, status=403)
 
-        apps = MentorApplication.objects.filter(
-            student__supervisor=request.user,
-            status="pending"
-        )
+        applications = MentorApplication.objects.filter(status="pending").order_by("-created_at")
 
-        serializer = MentorApplicationSerializer(apps, many=True)
-        return Response(serializer.data)
+        data = []
+        for app in applications:
+            data.append({
+                "id": app.id,
+                "student_id": app.student.id,
+                "student_name": f"{app.student.first_name} {app.student.last_name}",
+                "course_name": app.course.name if app.course else None,
+                "created_at": app.created_at,
+            })
+
+        return Response({"pending_applications": data}, status=200)
+
+    # -----------------------------
+    # 5) السوبرفايزر يشوف تفاصيل الطلب (المعلومات + الملفات)
+    # -----------------------------
+    @action(detail=True, methods=["get"], url_path="details")
+    def details(self, request, pk=None):
+        user = request.user
+
+        # فقط السوبرفايزر يشوف التفاصيل
+        if user.role != "supervisor":
+            return Response({"error": "Only supervisors can view application details"}, status=403)
+
+        try:
+            app = MentorApplication.objects.get(id=pk)
+        except MentorApplication.DoesNotExist:
+            return Response({"error": "Application not found"}, status=404)
+
+        data = {
+            "id": app.id,
+            "student_id": app.student.id,
+            "student_name": f"{app.student.first_name} {app.student.last_name}",
+            "student_email": app.student.email,
+
+            "course_id": app.course.id if app.course else None,
+            "course_name": app.course.name if app.course else None,
+
+            "motivation_text": app.motivation_text,
+            "experience_text": app.experience_text,
+
+            "file1": request.build_absolute_uri(app.file1.url) if app.file1 else None,
+            "file2": request.build_absolute_uri(app.file2.url) if app.file2 else None,
+
+            "status": app.status,
+            "review_note": app.review_note,
+            "created_at": app.created_at,
+        }
+
+        return Response(data, status=200)
+
 
     # -----------------------------
     # 5) السوبرفايزر يراجع الطلب (قبول/رفض)

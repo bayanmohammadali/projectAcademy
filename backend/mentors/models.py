@@ -18,9 +18,20 @@ class MentorApplication(models.Model):
     motivation_text = models.TextField()
     experience_text = models.TextField()
 
-    status = models.CharField(max_length=50)  #  / approve / reject / Trial 
+    STATUS_CHOICES = [
+    ("pending", "Pending"),
+    ("trial", "Trial"),
+    ("approved", "Approved"),
+    ("rejected", "Rejected"),
+]
+    status = models.CharField(max_length=50, default="pending")  #  / approve / reject / Trial 
     ai_score = models.FloatField(null=True, blank=True)
 
+    file1 = models.FileField(upload_to="mentor_applications/", null=True, blank=True)
+
+    file2 = models.FileField(upload_to="mentor_applications/", null=True, blank=True)
+
+    review_note = models.TextField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
