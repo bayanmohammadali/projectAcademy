@@ -95,17 +95,27 @@ router.register("users", UserViewSet, basename="users")
 router.register("groups", GroupViewSet, basename="group") # هون بطلعلي كل المجموعات اللي الطالب مشارك فيهـا
 #____________________________________________________________
 #mentor
-#http://127.0.0.1:800/api/mentor_applications/apply/ - هون بسمح للطالب تقديم طلب مينتور لمادة معينة
-#http://127.0.0.1:800/api/mentor_applications/my_applications/ - الطالب يشوف طلباته
-#http://127.0.0.1:800/api/mentor_applications/pending/ - هون بطلعلي كل طلبات المينتورات اللي قدمت على مادة معينة واللي لسا ما انقبلت ولا رفضت (للسوبرفايزر)
-#http://127.0.0.1:800/api/mentor_applications/<application_id>/details/ - هون بطلعلي تفاصيل طلب مينتور معين (للسوبرفايزر)
+#http://127.0.0.1:8000/api/mentor_applications/apply/ - هون بسمح للطالب تقديم طلب مينتور لمادة معينة
+#http://127.0.0.1:8000/api/mentor_applications/my_applications/ - الطالب يشوف طلباته
+#http://127.0.0.1:8000/api/mentor_applications/pending/ - هون بطلعلي كل طلبات المينتورات اللي قدمت على مادة معينة واللي لسا ما انقبلت ولا رفضت (للسوبرفايزر)
+#http://127.0.0.1:8000/api/mentor_applications/<application_id>/details/ - هون بطلعلي تفاصيل طلب مينتور معين (للسوبرفايزر)
+#http://127.0.0.1:8000/api/mentor_applications/<application_id>/review/ - هون السوبرفايزر يقدر يوافق او يرفض طلب مينتور معين
+#http://127.0.0.1:8000/api/mentor_applications/<application_id>/final_decision/ - هون السوبرفايزر يقدر يوافق بشكل نهائي او يرفض طلب مينتور معين بعد فترة التجريب (للسوبرفايزر)
+#http://127.0.0.1:8000/api/mentor_applications/<application_id>/ai_score/ - هون السوبرفايزر يعطي AI Score لطلب مينتور معين (للسوبرفايزر)
+#للمينورات الرسميين
+#http://127.0.0.1:8000/api/mentor_applications/approved_by_course/<course_id>/ - المينتورات الموافق عليهم لمادة معيّنة
+#http://127.0.0.1:8000/api/mentor_applications/approved_by_mentor/ - هون بطلعلي كل المينتورات اللي تم الموافقة عليهم من قبل مينتور معين
+#للمينتورات التجريبيين
+#http://127.0.0.1:8000/api/mentor_applications/trial_by_course/<course_id>/ - المينتورات التجريبيين لمادة معيّنة
+#http://127.0.0.1:8000/api/mentor_applications/trial_by_supervisor/ - هون بطلعلي كل المينتورات التجريبيين اللي تحت اشراف سوبرفايزر معين
 
-
-
-#http://127.0.0.1:800/api/mentor_applications/review/<application_id>/ - هون السوبرفايزر يقدر يوافق او يرفض طلب مينتور معين
-#http://127.0.0.1:800/api/mentor_applications/ai_score/<application_id>/ - هون السوبرفايزر يقدر يعطي طلب مينتور معين تقييم بالاعتماد على الذكاء الاصطناعي (للسوبرفايزر)
-#http://127.0.0.1:800/api/mentor_applications/approved_by_course/<course_id>/ - المينتورات الموافق عليهم لمادة معيّنة
-#http://127.0.0.1:800/api/mentor_applications/approved_by_mentor -كل المينتورات الموافق عليهم عند السوبرفايزر
 router.register("mentor_applications", MentorApplicationViewSet, basename="mentor_application") # هون بطلعلي كل طلبات المينتورات اللي قدمت على مادة معينة
+
+
+
+
+
+
+
 
 urlpatterns += router.urls

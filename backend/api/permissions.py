@@ -1,4 +1,5 @@
 from rest_framework.permissions import BasePermission
+from mentors.models import MentorApplication
 
 class IsAdmin(BasePermission):
     def has_permission(self, request, view):
@@ -17,17 +18,26 @@ class IsSupervisor(BasePermission):
         )
 
 class IsStudent(BasePermission):
-    def has_permission(self, request, view):
+    def has_permission(self, request):
         return bool(
             request.user 
             and request.user.is_authenticated 
             and request.user.role == "student"
         )
 
-class IsMentor(BasePermission):
-    def has_permission(self, request, view):
+def is_mentor(user):
+    # نجيب آخر طلب Mentor قدّمه الطالب
+    app = MentorApplication.objects.filter(student=user).order_by('-created_at').first()
+    if not app:
+        return False
+
+    # Mentor تجريبي أو Mentor رسمي
+    return app.status in ["trial", "approved"]
+
+class IsTrialOrMentor(BasePermission):
+    def has_permission(self, request):
         return bool(
-            request.user 
-            and request.user.is_authenticated 
-            and request.user.role == "mentor"
+            request.user
+            and request.user.is_authenticated
+            and is_mentor(request.user)
         )

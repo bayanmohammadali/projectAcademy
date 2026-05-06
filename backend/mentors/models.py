@@ -32,6 +32,8 @@ class MentorApplication(models.Model):
     file2 = models.FileField(upload_to="mentor_applications/", null=True, blank=True)
 
     review_note = models.TextField(null=True, blank=True)
+
+    trial_end_date = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

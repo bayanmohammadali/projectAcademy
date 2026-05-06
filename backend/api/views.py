@@ -10,10 +10,14 @@ from django.contrib.auth import get_user_model
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
+from datetime import timedelta
+from django.utils import timezone
+from .utils import send_notification
+
 
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
-from .permissions import IsAdmin,IsSupervisor, IsStudent, IsMentor
+from .permissions import IsAdmin,IsSupervisor, IsStudent, IsTrialOrMentor
 from .serializers import (
     UniversitySerializer,
     UniversityNamesSerializer,
@@ -495,7 +499,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
 class CourseOfferingViewSet(viewsets.ModelViewSet):
     serializer_class = CourseOfferingSerializer
-    permission_classes = [IsAuthenticated, (IsSupervisor | IsAdmin | IsMentor | IsStudent)]
+    permission_classes = [IsAuthenticated, (IsSupervisor | IsAdmin | IsTrialOrMentor | IsStudent)]
 
     def get_queryset(self):
         semester = Semester.objects.filter(is_active=True).first()
@@ -682,7 +686,7 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
 
 
 class EnrollmentViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, (IsStudent | IsMentor)]
+    permission_classes = [IsAuthenticated, (IsStudent | IsTrialOrMentor)]
 
     def get_serializer_class(self):
         if self.action in ["current", "current_semester_courses"]:
@@ -899,7 +903,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
 
 class StudentSemesterView(APIView):
-    permission_classes = [IsAuthenticated, (IsStudent | IsMentor)]
+    permission_classes = [IsAuthenticated, (IsStudent | IsTrialOrMentor)]
 
     def get(self, request):
 
@@ -1063,9 +1067,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     serializer_class = MentorApplicationSerializer
     permission_classes = [IsAuthenticated]
 
-    # -----------------------------
     # 1) فلترة الطلبات حسب الدور
-    # -----------------------------
     def get_queryset(self):
         user = self.request.user
 
@@ -1080,9 +1082,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         # الادمن يشوف الكل
         return MentorApplication.objects.all()
 
-    # -----------------------------
     # 2) الطالب يقدم طلب
-    # -----------------------------
     @action(detail=False, methods=["post"], url_path="apply")
     def apply(self, request):
         student = request.user
@@ -1160,18 +1160,14 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
             "application_id": application.id
         })
 
-    # -----------------------------
     # 3) الطالب يشوف طلباته
-    # -----------------------------
     @action(detail=False, methods=["get"], url_path="my_applications")
     def my_applications(self, request):
         apps = MentorApplication.objects.filter(student=request.user)
         serializer = MentorApplicationSerializer(apps, many=True)
         return Response(serializer.data)
 
-    # -----------------------------
     # 4) السوبرفايزر يشوف الطلبات المعلّقة
-    # -----------------------------
     @action(detail=False, methods=["get"], url_path="pending")
     def pending(self, request):
         user = request.user
@@ -1193,9 +1189,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
         return Response({"pending_applications": data}, status=200)
 
-    # -----------------------------
     # 5) السوبرفايزر يشوف تفاصيل الطلب (المعلومات + الملفات)
-    # -----------------------------
     @action(detail=True, methods=["get"], url_path="details")
     def details(self, request, pk=None):
         user = request.user
@@ -1231,37 +1225,121 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
         return Response(data, status=200)
 
-
-    # -----------------------------
-    # 5) السوبرفايزر يراجع الطلب (قبول/رفض)
-    # -----------------------------
+    # 6) السوبرفايزر يراجع الطلب (قبول/رفض)
     @action(detail=True, methods=["post"], url_path="review")
-    def review_application(self, request, pk=None):
-        if request.user.role != "supervisor":
+    def review(self, request, pk=None):
+        user = request.user
+
+        if user.role != "supervisor":
             return Response({"error": "Only supervisors can review applications"}, status=403)
 
-        app = self.get_object()
-        status_value = request.data.get("status")
+        try:
+            app = MentorApplication.objects.get(id=pk)
+        except MentorApplication.DoesNotExist:
+            return Response({"error": "Application not found"}, status=404)
 
-        if status_value not in ["approved", "rejected"]:
-            return Response({"error": "Status must be either 'approved' or 'rejected'"}, status=400)
+        decision = request.data.get("decision")  # trial / reject
+        note = request.data.get("review_note", "")
 
-        app.status = status_value
+        if decision not in ["trial", "reject"]:
+            return Response({"error": "Invalid decision"}, status=400)
+
+        app.review_note = note
+
+        if decision == "trial":
+            app.status = "trial"
+            app.trial_end_date = timezone.now() + timedelta(days=7)
+
+            send_notification(
+            app.student,
+            "Trial Period Started",
+            "You have been accepted as a trial mentor for 7 days."
+        )
+        else:
+            app.status = "rejected"
+            app.trial_end_date = None
+
+            send_notification(
+            app.student,
+            "Application Rejected",
+            "Unfortunately, your mentor application has been rejected."
+        )
+
         app.save()
 
-        # إذا وافق → الطالب يصير مينتور
-        if status_value == "approved":
+        return Response({
+            "message": "Application reviewed successfully",
+            "new_status": app.status,
+            "trial_end_date": app.trial_end_date,
+            "review_note": app.review_note
+        }, status=200)
+
+    # 7) الموافقة بشكل نهائي 
+    @action(detail=True, methods=["post"], url_path="finalize")
+    def finalize(self, request, pk=None):
+        user = request.user
+
+        # فقط السوبرفايزر
+        if user.role != "supervisor":
+            return Response({"error": "Only supervisors can finalize applications"}, status=403)
+
+        # جلب الطلب
+        try:
+            app = MentorApplication.objects.get(id=pk)
+        except MentorApplication.DoesNotExist:
+            return Response({"error": "Application not found"}, status=404)
+
+        decision = request.data.get("decision")  # approve / reject
+        note = request.data.get("final_note", "")
+
+        if decision not in ["approve", "reject"]:
+            return Response({"error": "Invalid decision"}, status=400)
+
+        # لازم يكون الطالب أصلاً في مرحلة التجربة
+        if app.status != "trial":
+            return Response({"error": "Application is not in trial phase"}, status=400)
+
+
+        # إذا انتهت الفترة التجريبية
+        if app.trial_end_date and app.trial_end_date < timezone.now():
+            pass  # طبيعي، منكمّل
+
+        # حفظ ملاحظة السوبرفايزر
+        app.review_note = note
+
+        # القرار النهائي
+        if decision == "approve":
+            app.status = "approved"
+
             student = app.student
             student.role = "mentor"
             student.save()
 
-            app.course.mentors.add(student)
+            send_notification(
+            student,
+            "Final Approval",
+            "Congratulations! You are now an official mentor."
+        )
+                        
+        else:
+            app.status = "rejected"
 
-        return Response({"message": f"Application {status_value} successfully"})
+            send_notification(
+            app.student,
+            "Trial Failed",
+            "Unfortunately, you did not pass the trial period."
+        )
 
-    # -----------------------------
-    # 6) السوبرفايزر يعطي AI Score
-    # -----------------------------
+        app.save()
+
+        return Response({
+            "message": "Final decision applied successfully",
+            "new_status": app.status,
+            "review_note": app.review_note,
+            "role": app.student.role
+        }, status=200)
+    
+    # 8) السوبرفايزر يعطي AI Score
     @action(detail=True, methods=["post"], url_path="ai_score")
     def ai_score_application(self, request, pk=None):
         if request.user.role != "supervisor":
@@ -1280,30 +1358,33 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         app.ai_score = score
         app.save()
 
-        return Response({"message": "AI score assigned successfully"})
+        return Response({
+            "message": "AI score assigned successfully",
+            "application_id": app.id,
+            "ai_score": app.ai_score
+        })
 
-    # -----------------------------
-    # 7) المينتورات الموافق عليهم لمادة معيّنة
-    # -----------------------------
+    # 9) المينتورات الموافق عليهم لمادة معيّنة
     @action(detail=False, methods=["get"], url_path="approved_by_course/(?P<course_id>[^/.]+)")
     def approved_by_course(self, request, course_id=None):
-        apps = MentorApplication.objects.filter(course_id=course_id, status="approved")
-        mentors = [app.student for app in apps]
+
+        apps = MentorApplication.objects.filter(
+            course_id=course_id,
+            status="approved"
+        )
 
         data = [
             {
-                "id": m.id,
-                "name": f"{m.first_name} {m.last_name}",
-                "email": m.email
+                "id": app.student.id,
+                "name": f"{app.student.first_name} {app.student.last_name}",
+                "email": app.student.email
             }
-            for m in mentors
+            for app in apps
         ]
 
-        return Response(data)
+        return Response({"mentors": data})
 
-    # -----------------------------
-    # 8) كل المينتورات الموافق عليهم عند هذا السوبرفايزر
-    # -----------------------------
+    # 10) كل المينتورات الموافق عليهم عند هذا السوبرفايزر
     @action(detail=False, methods=["get"], url_path="approved_by_mentor")
     def approved_by_mentor(self, request):
         if request.user.role != "supervisor":
@@ -1311,8 +1392,60 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
         apps = MentorApplication.objects.filter(
             status="approved",
+        )
+
+        data = [
+            {
+                "id": app.student.id,
+                "name": f"{app.student.first_name} {app.student.last_name}",
+                "email": app.student.email,
+                "course": app.course.name if app.course else None
+            }
+            for app in apps
+        ]
+
+        return Response({"approved_mentors": data})
+
+   #11) المينتورات التجريبيين
+    @action(detail=False, methods=["get"], url_path="trial_by_course/(?P<course_id>[^/.]+)")
+    def trial_by_course(self, request, course_id=None):
+        apps = MentorApplication.objects.filter(course_id=course_id, status="trial")
+
+        data = [
+            {
+                "id": app.student.id,
+                "name": f"{app.student.first_name} {app.student.last_name}",
+                "email": app.student.email,
+                "trial_end_date": app.trial_end_date
+            }
+            for app in apps
+        ]
+
+        return Response({"trial_mentors": data})
+    
+    #12) 
+    @action(detail=False, methods=["get"], url_path="trial_by_supervisor")
+    def trial_by_supervisor(self, request):
+        if request.user.role != "supervisor":
+            return Response({"error": "Only supervisors can access this endpoint"}, status=403)
+
+        apps = MentorApplication.objects.filter(
+            status="trial",
             student__supervisor=request.user
         )
 
-        serializer = MentorApplicationSerializer(apps, many=True)
-        return Response(serializer.data)
+        data = [
+            {
+                "id": app.student.id,
+                "name": f"{app.student.first_name} {app.student.last_name}",
+                "email": app.student.email,
+                "course": app.course.name if app.course else None,
+                "trial_end_date": app.trial_end_date
+            }
+            for app in apps
+        ]
+
+        return Response({"trial_mentors": data})
+
+
+
