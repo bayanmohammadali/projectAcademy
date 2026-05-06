@@ -727,19 +727,6 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
         student = request.user
 
-    
-        if student.supervisor is None:
-
-            supervisors=User.objects.filter(
-                role="supervisor",
-                specialization=student.specialization
-            ).annotate(
-                num_students=Count("students")
-            ).order_by("num_students")
-
-            if supervisors.exists():
-                student.supervisor = supervisors.first()
-                student.save()
 
         return Response({
             "message": "Course registered successfully",

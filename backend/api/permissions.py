@@ -18,7 +18,7 @@ class IsSupervisor(BasePermission):
         )
 
 class IsStudent(BasePermission):
-    def has_permission(self, request):
+    def has_permission(self, request , view):
         return bool(
             request.user 
             and request.user.is_authenticated 
@@ -35,7 +35,7 @@ def is_mentor(user):
     return app.status in ["trial", "approved"]
 
 class IsTrialOrMentor(BasePermission):
-    def has_permission(self, request):
+    def has_permission(self, request, view):
         return bool(
             request.user
             and request.user.is_authenticated
