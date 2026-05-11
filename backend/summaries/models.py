@@ -87,6 +87,7 @@ class SummaryRating(models.Model):
     )
 
     rating_value = models.IntegerField()
+    comment = models.TextField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -2,7 +2,7 @@
 from rest_framework.decorators import APIView, action
 from rest_framework import generics, request
 from rest_framework.permissions import AllowAny
-from django.db.models import Q, Count
+from django.db.models import Q
 from rest_framework.decorators import action 
 from academic.signals import notify_students_and_mentors
 from .serializers import CourseNameSerializer, CourseOfferingNameSerializer, CurrentSemesterEnrollmentSerializer, RegisterSerializer, StudentSemesterSerializer, SupervisorCreateSerializer, SupervisorSerializer
@@ -39,6 +39,10 @@ from .serializers import (
     GroupsSerializer,
     GroupNameSerializer,
     MentorApplicationSerializer,
+    SummarySerializer,
+    SummaryNameSerializer,
+    SummaryReviewSerializer,
+    SummaryVersionSerializer,
 
 
 )
@@ -50,6 +54,7 @@ from courses.models import Course, CourseOffering, Enrollment, Lecture
 from majors.models import Major
 from summaries.models import Summary
 from mentors.models import MentorApplication
+from summaries.models import Summary, SummaryVersion, SummaryReview, SummaryRating
 
 User = get_user_model()
 
@@ -677,14 +682,7 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
         lecture.delete()
 
         return Response({"message": "Lecture removed successfully"}, status=200)
-
-
-
     
-
-
-
-
 class EnrollmentViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, (IsStudent | IsTrialOrMentor)]
 
@@ -1433,6 +1431,209 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         ]
 
         return Response({"trial_mentors": data})
+
+
+class SummaryViewSet(viewsets.ModelViewSet):
+    queryset = Summary.objects.all()
+    serializer_class=SummarySerializer
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=["get"], url_path="search")
+    def search_summaries(self, request):
+        query = request.query_params.get("q", "").strip()
+
+        if not query:
+            return Response({"error": "Search query is required"}, status=400)
+
+        summaries = Summary.objects.filter(
+            Q(title__icontains=query) |
+            Q(lecture__title__icontains=query) |
+            Q(student__first_name__icontains=query) |
+            Q(student__last_name__icontains=query)
+        ).order_by("-created_at")
+
+        serializer = SummarySerializer(summaries, many=True)
+        return Response(serializer.data, status=200)
+
+    @action(detail=False, methods=["post"], url_path="create")
+    def create_summary(self, request):
+        user = request.user
+        lecture_id = request.data.get("lecture")
+
+        # 1) نجيب الـ Lecture
+        try:
+            lecture = Lecture.objects.get(id=lecture_id)
+        except Lecture.DoesNotExist:
+            return Response({"error": "Lecture not found"}, status=404)
+
+        # 2) نتأكد إنو المستخدم مينتور (trial أو approved) لنفس الكورس
+        is_mentor = MentorApplication.objects.filter(
+            student=user,
+            course=lecture.course_offering.course,
+            status__in=["trial", "approved"]
+        ).exists()
+
+        if not is_mentor:
+            return Response(
+                {"error": "You are not allowed to upload summaries for this lecture"},
+                status=403
+            )
+
+        # 3) إنشاء Summary
+        summary = Summary.objects.create(
+            title=request.data.get("title"),
+            file=request.data.get("file"),
+            status="pending",
+            lecture=lecture,
+            student=user
+        )
+
+        # 4) إنشاء أول نسخة SummaryVersion
+        SummaryVersion.objects.create(
+            summary=summary,
+            file_path=summary.file,
+            version_number=1,
+            is_active=True
+        )
+
+        return Response({"message": "Summary submitted successfully"}, status=201)
+
+
+    @action(detail=False, methods=["get"], url_path="my-summaries")
+    def my_summaries(self, request):
+        user = request.user
+
+        # 1) نجيب ملخصات المينتور نفسه
+        summaries = Summary.objects.filter(
+            student=user
+        ).order_by("-created_at")
+
+        serializer = SummarySerializer(summaries, many=True)
+        return Response(serializer.data, status=200)
+
+
+
+    @action(detail=False, methods=["get"], url_path="pending")
+    def pending_summaries(self, request):
+        user = request.user
+
+        # السوبرفايزر فقط
+        offerings = CourseOffering.objects.filter(supervisor=user)
+        lectures = Lecture.objects.filter(course_offering__in=offerings)
+
+        summaries = Summary.objects.filter(
+            lecture__in=lectures,
+            status="pending"
+        ).order_by("-created_at")
+
+        serializer = SummarySerializer(summaries, many=True)
+        return Response(serializer.data, status=200)
+
+
+    @action(detail=True, methods=["post"], url_path="review")
+    def review_summary(self, request, pk=None):
+        supervisor = request.user
+
+        try:
+            summary = Summary.objects.get(id=pk)
+        except Summary.DoesNotExist:
+            return Response({"error": "Summary not found"}, status=404)
+
+        # تأكد إنو السوبرفايزر هو المسؤول عن المادة
+        if summary.lecture.course_offering.supervisor != supervisor:
+            return Response({"error": "Not authorized"}, status=403)
+
+        status_value = request.data.get("status")  # approved / rejected
+        notes = request.data.get("notes", "")
+
+        # تحديث حالة الملخص
+        summary.status = status_value
+        summary.save()
+
+        # النسخة الفعّالة
+        active_version = summary.versions.filter(is_active=True).first()
+
+        # إنشاء مراجعة
+        SummaryReview.objects.create(
+            summary_version=active_version,
+            supervisor=supervisor,
+            status=status_value,
+            notes=notes
+        )
+
+        return Response({"message": "Review submitted"}, status=200)
+
+    @action(detail=True, methods=["post"], url_path="new-version")
+    def new_version(self, request, pk=None):
+        user = request.user
+
+        try:
+            summary = Summary.objects.get(id=pk)
+        except Summary.DoesNotExist:
+            return Response({"error": "Summary not found"}, status=404)
+
+        # 1) تأكد إنو المستخدم هو صاحب الملخص
+        if summary.student != user:
+            return Response({"error": "Not authorized"}, status=403)
+
+        # 2) تعطيل النسخة الحالية
+        summary.versions.filter(is_active=True).update(is_active=False)
+
+        # 3) إنشاء نسخة جديدة
+        new_version = SummaryVersion.objects.create(
+            summary=summary,
+            file_path=request.data.get("file"),
+            version_number=summary.versions.count() + 1,
+            is_active=True
+        )
+
+        # 4) إعادة حالة الملخص إلى pending
+        summary.status = "pending"
+        summary.save()
+
+        return Response({"message": "New version submitted"}, status=201)
+    
+    @action(detail=True, methods=["get"], url_path="versions")
+    def summary_versions(self, request, pk=None):
+        try:
+            summary = Summary.objects.get(id=pk)
+        except Summary.DoesNotExist:
+            return Response({"error": "Summary not found"}, status=404)
+
+        versions = summary.versions.all().order_by("-version_number")
+
+        data = []
+        for v in versions:
+            data.append({
+                "id": v.id,
+                "version_number": v.version_number,
+                "file": v.file_path.url if v.file_path else None,
+                "is_active": v.is_active,
+                "created_at": v.created_at,
+                "reviews": [
+                    {
+                        "status": r.status,
+                        "notes": r.notes,
+                        "reviewed_at": r.reviewed_at
+                    }
+                    for r in v.reviews.all()
+                ],
+                "ratings": [
+                    {
+                        "rating": rt.rating_value,
+                        "comment": rt.comment,
+                        "created_at": rt.created_at
+                    }
+                    for rt in v.ratings.all()
+                ]
+            })
+
+        return Response(data, status=200)
+
+
+
+
+
 
 
 

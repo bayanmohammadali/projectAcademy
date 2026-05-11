@@ -9,7 +9,7 @@ from groups.models import Group, GroupMember
 from users.models import Notification
 from courses.models import Course, CourseOffering, Enrollment, Lecture
 from mentors.models import MentorApplication
-
+from summaries.models import Summary, SummaryVersion, SummaryReview, SummaryRating, Favorite
 
 User = get_user_model()
 
@@ -50,8 +50,6 @@ class RegisterSerializer(serializers.ModelSerializer):
         )
         return user
     
-
-
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
@@ -292,3 +290,84 @@ class MentorApplicationSerializer(serializers.ModelSerializer):
         model = MentorApplication
         fields = "__all__"
         read_only_fields = ["created_at", "status"]
+
+
+class SummarySerializer(serializers.ModelSerializer):
+    lecture_title = serializers.CharField(source="lecture.title", read_only=True)
+    active_version = serializers.SerializerMethodField()
+    reviews = serializers.SerializerMethodField()
+    ratings = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Summary
+        fields = [
+            "id",
+            "title",
+            "status",
+            "lecture_title",
+            "file",
+            "created_at",
+            "active_version",
+            "reviews",
+            "ratings",
+        ]
+
+    def get_active_version(self, obj):
+        version = obj.versions.filter(is_active=True).first()
+        if version:
+            return {
+                "version_number": version.version_number,
+                "file": version.file_path.url if version.file_path else None
+            }
+        return None
+
+    def get_reviews(self, obj):
+        active_version = obj.versions.filter(is_active=True).first()
+        if not active_version:
+            return []
+        return [
+            {
+                "status": review.status,
+                "notes": review.notes,
+                "reviewed_at": review.reviewed_at
+            }
+            for review in active_version.reviews.all()
+        ]
+
+    def get_ratings(self, obj):
+        active_version = obj.versions.filter(is_active=True).first()
+        if not active_version:
+            return []
+
+        return [
+            {
+                "rating": rating.rating_value,
+                "comment": rating.comment,
+                "created_at": rating.created_at
+            }
+            for rating in active_version.ratings.all()
+        ]
+
+
+class SummaryNameSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Summary
+        fields = ["id", "title"]
+
+class SummaryVersionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SummaryVersion
+        fields = "__all__"
+        read_only_fields = ["created_at"]
+
+class SummaryReviewSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SummaryReview
+        fields = "__all__"
+        read_only_fields = ["created_at", "status"]
+
+class SummaryRatingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SummaryRating
+        fields = "__all__"
+        read_only_fields = ["created_at"]

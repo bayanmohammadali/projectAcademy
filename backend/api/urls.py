@@ -30,6 +30,7 @@ from.views import (
     SupervisorViewSet,
     GroupViewSet,
     MentorApplicationViewSet,
+    SummaryViewSet
 
 )
 
@@ -110,12 +111,18 @@ router.register("groups", GroupViewSet, basename="group") # هون بطلعلي 
 #http://127.0.0.1:8000/api/mentor_applications/trial_by_supervisor/ - هون بطلعلي كل المينتورات التجريبيين اللي تحت اشراف سوبرفايزر معين
 
 router.register("mentor_applications", MentorApplicationViewSet, basename="mentor_application") # هون بطلعلي كل طلبات المينتورات اللي قدمت على مادة معينة
+#__________________________________
+#mentor Sumary:
+#http://127.0.0.1:8000/api/summaries/search/ - هون بطلعلي الملخصات اللي تطابق بحث معين
+#http://127.0.0.1:8000/api/summaries/create/ - هون بسمح للطالب اضافة ملخص جديد لمادة معينة
+#http://127.0.0.1:8000/api/summaries/my-summaries/ - هون بطلعلي كل الملخصات اللي انا ضفتها كطالب
+#http://127.0.0.1:8000/api/summaries/<summary_id>/new-version/ - هون بسمح للطالب اضافة نسخة جديدة من ملخص معين
+#http://127.0.0.1:8000/api/summaries/<summary_id>/versions/ - هون بطلعلي كل النسخ اللي تم اضافتها لملخص معين
 
-
-
-
-
-
+#supervisor:
+# http://127.0.0.1:8000/api/summaries/pending/ - هون بطلعلي كل الملخصات اللي لسا ما انقبلت ولا رفضت لمادة معينة (للسوبرفايزر)
+#http://127.0.0.1:8000/api/summaries/<summary_id>/review/ - هون السوبرفايزر يقدر يوافق او يرفض ملخص معين
+router.register("summaries", SummaryViewSet, basename="summary") # هون بطلعلي كل الملخصات اللي بتتبع مادة معينة
 
 
 urlpatterns += router.urls
