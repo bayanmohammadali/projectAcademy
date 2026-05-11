@@ -3,7 +3,7 @@ from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.contrib.auth.base_user import BaseUserManager
 from django.utils import timezone
-from academic.models import University
+from academic.models import University, AcademicYear
 from majors.models import Major
 
 
@@ -40,7 +40,6 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
 
     email = models.EmailField(unique=True)
-    password = models.CharField(max_length=255)
 
     first_name = models.CharField(max_length=100, blank=True)
     last_name = models.CharField(max_length=100, blank=True)
@@ -55,6 +54,8 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     major = models.ForeignKey(Major, on_delete=models.SET_NULL, null=True, related_name="users")
     university = models.ForeignKey(University, on_delete=models.SET_NULL, null=True, related_name="users", blank=True)
+
+    is_primary_supervisor = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(default=timezone.now)
 
@@ -89,3 +90,74 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"Notification for {self.user.email}: {self.type}"
+    
+
+
+class Survey(models.Model):
+    academic_year = models.ForeignKey(
+        AcademicYear,
+        on_delete=models.CASCADE,
+        related_name="surveys",
+        null=True
+    )
+
+    title = models.CharField(max_length=255)
+    description = models.TextField(null=True, blank=True)
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="created_surveys"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.title
+
+class SurveyQuestion(models.Model):
+    survey = models.ForeignKey(
+        Survey,
+        on_delete=models.CASCADE,
+        related_name="questions"
+    )
+
+    text = models.TextField()
+
+    QUESTION_TYPES = [
+        ("rating", "Rating"),
+        ("choice", "Multiple Choice"),
+    ]
+
+    question_type = models.CharField(max_length=20, choices=QUESTION_TYPES, default="choice")
+
+    choices = models.JSONField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Q: {self.text}"
+
+class SurveyAnswer(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="survey_answers"
+    )
+
+    question = models.ForeignKey(
+        SurveyQuestion,
+        on_delete=models.CASCADE,
+        related_name="answers"
+    )
+
+    answer = models.TextField()  # نص، رقم، اختيار… كله يمشي
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user", "question")  # كل مستخدم يجاوب مرة واحدة فقط
+
+    def __str__(self):
+        return f"{self.user.email} → {self.question.text}"
+

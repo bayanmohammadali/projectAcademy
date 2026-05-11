@@ -18,75 +18,99 @@ class MentorApplication(models.Model):
     motivation_text = models.TextField()
     experience_text = models.TextField()
 
-    STATUS_CHOICES = [
-    ("pending", "Pending"),
-    ("trial", "Trial"),
-    ("approved", "Approved"),
-    ("rejected", "Rejected"),
-]
-    status = models.CharField(max_length=50, default="pending")  #  / approve / reject / Trial 
+    status = models.CharField(max_length=50, default="pending")
     ai_score = models.FloatField(null=True, blank=True)
 
     file1 = models.FileField(upload_to="mentor_applications/", null=True, blank=True)
-
     file2 = models.FileField(upload_to="mentor_applications/", null=True, blank=True)
 
     review_note = models.TextField(null=True, blank=True)
-
     trial_end_date = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
+    # ⭐ منع تضارب المعالجة
+    is_processing = models.BooleanField(default=False)
+
+    processing_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="processing_applications"
+    )
+
     class Meta:
-        unique_together = ("student", "course")  #  يمنع التكرار
+        unique_together = ("student", "course")
 
     def __str__(self):
-        return f"Application by {self.student.email} for {self.course.name}"
+        return f"Application by {self.student.email}"
 
 
-class Session(models.Model):
+class MentorRenewal(models.Model):
     mentor = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="sessions"
+        related_name="renewal_records"
     )
 
     course_offering = models.ForeignKey(
         "courses.CourseOffering",
         on_delete=models.CASCADE,
-        related_name="sessions",
-        null=True, blank=True
+        related_name="mentor_renewals"
     )
 
-    title = models.CharField(max_length=255)
-    description = models.TextField()
+    is_renewed = models.BooleanField(default=False)
 
-    session_date = models.DateTimeField()
-    duration = models.IntegerField()  # minutes
+    renewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="renewed_mentors"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return self.title
+        return f"Renewal for {self.mentor.email} in {self.course_offering}"
 
 
-class SessionParticipant(models.Model):
-    session = models.ForeignKey(
-        Session,
-        on_delete=models.CASCADE,
-        related_name="participants"
-    )
-
+class ChatRoom(models.Model):
     student = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
-        related_name="joined_sessions"
+        related_name="student_rooms"
     )
 
-    joined_at = models.DateTimeField(auto_now_add=True)
+    mentor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="mentor_rooms"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.student.email} joined {self.session.title}"
+        return f"Chat: {self.student.email} ↔ {self.mentor.email}"
+    
+class ChatMessage(models.Model):
+    chatroom = models.ForeignKey(
+        ChatRoom,
+        on_delete=models.CASCADE,
+        related_name="messages"
+    )
 
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="sent_messages"
+    )
+
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Message from {self.sender.email}"
 
 class MentorRating(models.Model):
     student = models.ForeignKey(
@@ -101,18 +125,23 @@ class MentorRating(models.Model):
         related_name="received_ratings"
     )
 
-    session = models.ForeignKey(
-        Session,
+    chatroom = models.ForeignKey(
+        ChatRoom,
         on_delete=models.CASCADE,
-        related_name="mentor_ratings"
+        related_name="ratings",
+        null=True,         
+        blank=True  
     )
 
     rating_value = models.IntegerField()
+    comment = models.TextField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return f"Rating {self.rating_value} for {self.mentor.email}"
+
+
 
 
 class CourseMentorRecommendation(models.Model):
