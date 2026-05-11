@@ -597,11 +597,13 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
             return Response({"error": "Course offering not found"}, status=404)
 
         # 2) تجهيز البيانات
-        data = request.data.copy()
-        data["course_offering"] = offering.id
-
+        serializer = LectureSerializer(data={
+        'title': request.data.get('title'),
+        'course_offering': offering.id,
+        'file': request.FILES.get('file'),
+    })
         # 3) إنشاء المحاضرة
-        serializer = LectureSerializer(data=data)
+       
         serializer.is_valid(raise_exception=True)
         lecture = serializer.save()
 
