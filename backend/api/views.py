@@ -2,13 +2,14 @@
 from rest_framework.decorators import APIView, action
 from rest_framework import generics, request
 from rest_framework.permissions import AllowAny
-from django.db.models import Q
+from django.db.models import Q, Count
 from rest_framework.decorators import action 
 from academic.signals import notify_students_and_mentors
 from .serializers import CourseNameSerializer, CourseOfferingNameSerializer, CurrentSemesterEnrollmentSerializer, RegisterSerializer, StudentSemesterSerializer, SupervisorCreateSerializer, SupervisorSerializer
 from django.contrib.auth import get_user_model
 from rest_framework.response import Response
 from rest_framework import status
+from django.http import FileResponse, Http404
 from rest_framework_simplejwt.tokens import RefreshToken
 from datetime import timedelta
 from django.utils import timezone
@@ -53,7 +54,7 @@ from groups.models import Group, GroupMessage, GroupFile, GroupMember
 from courses.models import Course, CourseOffering, Enrollment, Lecture
 from majors.models import Major
 from summaries.models import Summary
-from mentors.models import MentorApplication
+from mentors.models import MentorApplication, MentorRenewal
 from summaries.models import Summary, SummaryVersion, SummaryReview, SummaryRating
 
 User = get_user_model()
@@ -121,11 +122,20 @@ class UserViewSet(viewsets.ModelViewSet):
      # عدد السوبرفايزرات
         supervisors = User.objects.filter(role="supervisor").count()
 
+        majors = Major.objects.count()
+        majors_student = Major.objects.annotate(
+        total_students=Count("users", filter=Q(users__role__in=["student", "mentor"]))
+        ).values(
+            "id", "name", "total_students"
+        )
+
         return Response({
             "students_and_mentors": students_and_mentors,
             "universities": universities,
             "courses": courses,
-            "supervisors": supervisors
+            "supervisors": supervisors,
+            "majors": majors,
+            "majors_student": majors_student
         })
     
     @action(detail=False, methods=["get"], url_path="supervisor_dashboard")
@@ -754,24 +764,26 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
          for en in enrollments
         ]
         return Response(courses)
-    
-    @action(detail=False, methods=["get"], url_path="lectures_by_course/(?P<course_id>[^/.]+)")
-    def lectures_by_course(self, request, course_id=None):
-    
+   
+    @action(detail=True, methods=["get"], url_path="lectures")
+    def lectures_by_enrollment(self, request, pk=None):
         user = request.user
-        if user.role in ["student", "mentor"]:
-            is_enrolled = Enrollment.objects.filter(
-                student=user,
-                course_offering__course_id=course_id
-            ).exists()
 
-        if not is_enrolled:
+        # pk هون هي enrollment_id
+        enrollment = Enrollment.objects.filter(
+            id=pk,
+            student=user,
+            course_offering__semester__is_active=True
+        ).select_related("course_offering").first()
+
+        if not enrollment:
             return Response(
-                {"error": "You are not enrolled in this course"},
-                status=403
+                {"error": "Enrollment not found or not yours in active semester"},
+                status=404
             )
+
         lectures = Lecture.objects.filter(
-            course_offering__course_id=course_id
+            course_offering=enrollment.course_offering
         )
 
         data = [
@@ -784,26 +796,26 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         ]
 
         return Response(data)
-    
 
-    @action(detail=False, methods=["get"], url_path="summaries_by_course/(?P<course_id>[^/.]+)")
-    def summaries_by_course(self, request, course_id=None):
+
+
+    @action(detail=True, methods=["get"], url_path="summaries")
+    def summaries_by_course(self, request, pk=None):
         user = request.user
 
-        if user.role in ["student", "mentor"]:
-            is_enrolled = Enrollment.objects.filter(
-                student=user,
-                course_offering__course_id=course_id
-            ).exists()
+        enrollment = Enrollment.objects.filter(
+            id=pk,
+            student=user
+        ).select_related("course_offering").first()
 
-            if not is_enrolled:
-                return Response(
-                    {"error": "You are not enrolled in this course"},
-                    status=403
-                )
-            
+        if not enrollment:
+            return Response(
+                {"error": "Enrollment not found or not yours"},
+                status=404
+            )
+
         summaries = Summary.objects.filter(
-            lecture__course_offering__course_id=course_id
+            lecture__course_offering=enrollment.course_offering
         )
 
         data = [
@@ -816,36 +828,45 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         ]
 
         return Response(data)
+
+       
     
-    @action(detail=False, methods=["get"], url_path="mentors_by_course/(?P<course_id>[^/.]+)")
-    def mentors_by_course(self, request, course_id=None):
+    @action(detail=True, methods=["get"], url_path="mentors")
+    def mentors_by_enrollment(self, request, pk=None):
         user = request.user
 
-        if user.role in ["student", "mentor"]:
-            is_enrolled = Enrollment.objects.filter(
-                student=user,
-                course_offering__course_id=course_id
-            ).exists()
+        # 1) تأكيد إنو الـ enrollment للطالب
+        enrollment = Enrollment.objects.filter(
+            id=pk,
+            student=user
+        ).select_related("course_offering").first()
 
-            if not is_enrolled:
-                return Response(
-                    {"error": "You are not enrolled in this course"},
-                    status=403
-                )
-            
-        course = Course.objects.get(id=course_id)
-        mentors = course.mentors.all()
+        if not enrollment:
+            return Response(
+                {"error": "Enrollment not found or not yours"},
+                status=404
+            )
 
-        data = [
+        # 2) نجيب الـ course_offering
+        course_offering = enrollment.course_offering
+
+        # 3) نجيب المينتورات من MentorRenewal
+        mentor_links = MentorRenewal.objects.filter(
+            course_offering_id=course_offering.id,
+            is_renewed=True
+        ).select_related("mentor")
+
+        mentors = [
             {
-                "id": m.id,
-                "name": f"{m.first_name} {m.last_name}",
-                "email": m.email
+                "id": m.mentor.id,
+                "name": f"{m.mentor.first_name} {m.mentor.last_name}",
+                "email": m.mentor.email
             }
-            for m in mentors
+            for m in mentor_links
         ]
 
-        return Response(data)
+        return Response(mentors)
+
     
     @action(detail=False, methods=["post"], url_path="drop")
     def drop_course(self, request):
@@ -885,6 +906,284 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
         return Response({"message": "Course dropped successfully"})
 
+
+    @action(
+    detail=True,
+    methods=["get"],
+    url_path="download/lecture/(?P<lecture_id>[^/.]+)"
+)
+    def download_lecture(self, request, pk=None, lecture_id=None):
+        user = request.user
+
+        # 1) تأكيد إنو الـ enrollment للطالب
+        enrollment = Enrollment.objects.filter(
+            id=pk,
+            student=user
+        ).select_related("course_offering").first()
+
+        if not enrollment:
+            return Response(
+                {"error": "Enrollment not found or not yours"},
+                status=404
+            )
+
+        # 2) نجيب المحاضرة
+        try:
+            lecture = Lecture.objects.get(id=lecture_id)
+        except Lecture.DoesNotExist:
+            return Response({"error": "Lecture not found"}, status=404)
+
+        # 3) تأكيد إنو المحاضرة تابعة لنفس الـ course_offering
+        if lecture.course_offering_id != enrollment.course_offering_id:
+            return Response(
+                {"error": "This lecture does not belong to your enrollment"},
+                status=403
+            )
+
+        # 4) تأكيد وجود الملف
+        if not lecture.file:
+            return Response({"error": "No file available"}, status=404)
+
+        # 5) تحميل الملف
+        return FileResponse(
+            lecture.file.open("rb"),
+            as_attachment=True,
+            filename=lecture.file.name
+        )
+
+
+    @action(
+    detail=True,
+    methods=["get"],
+    url_path="download/summary/(?P<summary_id>[^/.]+)"
+)
+    def download_summary(self, request, pk=None, summary_id=None):
+        user = request.user
+
+        # 1) تأكيد إنو الـ enrollment للطالب
+        enrollment = Enrollment.objects.filter(
+            id=pk,
+            student=user
+        ).select_related("course_offering").first()
+
+        if not enrollment:
+            return Response(
+                {"error": "Enrollment not found or not yours"},
+                status=404
+            )
+
+        # 2) نجيب الملخص
+        try:
+            summary = Summary.objects.select_related("lecture").get(id=summary_id)
+        except Summary.DoesNotExist:
+            return Response({"error": "Summary not found"}, status=404)
+
+        # 3) تأكيد إنو الملخص تابع لمحاضرة ضمن نفس الـ course_offering
+        if summary.lecture.course_offering_id != enrollment.course_offering_id:
+            return Response(
+                {"error": "This summary does not belong to your enrollment"},
+                status=403
+            )
+
+        # 4) تأكيد وجود الملف
+        if not summary.file:
+            return Response({"error": "No file available"}, status=404)
+
+        # 5) تحميل الملف
+        return FileResponse(
+            summary.file.open("rb"),
+            as_attachment=True,
+            filename=summary.file.name
+        )
+
+
+    @action(detail=False, methods=["get"], url_path="archive/(?P<course_id>[^/.]+)")
+    def course_archive(self, request, course_id=None):
+        user = request.user
+
+        # 1) تأكد إنو الطالب مسجّل بالمادة بالفصل الحالي
+        is_enrolled = Enrollment.objects.filter(
+            student=user,
+            course_offering__course_id=course_id,
+            course_offering__semester__is_active=True
+        ).exists()
+
+        if not is_enrolled:
+            return Response(
+                {"error": "You must be enrolled in the current semester to view the archive"},
+                status=403
+            )
+
+        # 2) نجيب كل CourseOffering لنفس المادة باستثناء الفصل الحالي
+        offerings = CourseOffering.objects.filter(
+            course_id=course_id
+        ).exclude(
+            semester__is_active=True
+        ).select_related("semester")
+
+        archive_data = []
+
+        for off in offerings:
+            lectures = Lecture.objects.filter(course_offering=off)
+            summaries = Summary.objects.filter(lecture__course_offering=off)
+
+            archive_data.append({
+                "semester": off.semester.name,
+                "academic_year": off.semester.academic_year.name,
+                "lectures": [
+                    {
+                        "id": lec.id,
+                        "title": lec.title,
+                        "file": lec.file.url if lec.file else None
+                    }
+                    for lec in lectures
+                ],
+                "summaries": [
+                    {
+                        "id": s.id,
+                        "title": s.title,
+                        "file": s.file.url if s.file else None
+                    }
+                    for s in summaries
+                ]
+            })
+
+        return Response(archive_data)
+    
+    @action(
+    detail=True,
+    methods=["get"],
+    url_path="archive/(?P<course_id>[^/.]+)"
+)
+    def course_archive(self, request, pk=None, course_id=None):
+        user = request.user
+
+        # 1) تأكيد إنو الـ enrollment للطالب
+        enrollment = Enrollment.objects.filter(
+            id=pk,
+            student=user
+        ).select_related("course_offering__course").first()
+
+        if not enrollment:
+            return Response(
+                {"error": "Enrollment not found or not yours"},
+                status=404
+            )
+
+        # 2) تأكيد إنو course_id هو نفس المادة تبع الـ enrollment
+        current_course = enrollment.course_offering.course
+
+        if str(current_course.id) != str(course_id):
+            return Response(
+                {"error": "This course does not match your enrollment"},
+                status=403
+            )
+
+        # 3) نجيب كل الـ course_offerings السابقة لنفس المادة
+        previous_offerings = CourseOffering.objects.filter(
+            course_id=course_id
+        ).exclude(id=enrollment.course_offering_id)
+
+        archive_data = []
+
+        for offering in previous_offerings:
+            lectures = Lecture.objects.filter(course_offering=offering)
+            summaries = Summary.objects.filter(lecture__course_offering=offering)
+
+            archive_data.append({
+                "course_offering_id": offering.id,
+                "semester": offering.semester.name,
+                "lectures": [
+                    {"id": lec.id, "title": lec.title}
+                    for lec in lectures
+                ],
+                "summaries": [
+                    {"id": s.id, "title": s.title}
+                    for s in summaries
+                ]
+            })
+
+        return Response(archive_data)
+
+
+    @action(
+    detail=True,
+    methods=["get"],
+    url_path="download/archive/lecture/(?P<lecture_id>[^/.]+)"
+)
+    def download_archive_lecture(self, request, pk=None, lecture_id=None):
+        user = request.user
+
+        # 1) تأكيد إنو الـ enrollment للطالب
+        enrollment = Enrollment.objects.filter(
+            id=pk,
+            student=user
+        ).select_related("course_offering__course").first()
+
+        if not enrollment:
+            return Response({"error": "Enrollment not found or not yours"}, status=404)
+
+        course = enrollment.course_offering.course
+
+        # 2) نجيب المحاضرة
+        try:
+            lecture = Lecture.objects.select_related("course_offering").get(id=lecture_id)
+        except Lecture.DoesNotExist:
+            return Response({"error": "Lecture not found"}, status=404)
+
+        # 3) تأكيد إنو المحاضرة تابعة لنفس المادة (course)
+        if lecture.course_offering.course_id != course.id:
+            return Response(
+                {"error": "This lecture does not belong to your course"},
+                status=403
+            )
+
+        if not lecture.file:
+            return Response({"error": "No file available"}, status=404)
+
+        return FileResponse(
+            lecture.file.open("rb"),
+            as_attachment=True,
+            filename=lecture.file.name
+        )
+    
+    @action(
+    detail=True,
+    methods=["get"],
+    url_path="download/archive/summary/(?P<summary_id>[^/.]+)"
+)
+    def download_archive_summary(self, request, pk=None, summary_id=None):
+        user = request.user
+
+        enrollment = Enrollment.objects.filter(
+            id=pk,
+            student=user
+        ).select_related("course_offering__course").first()
+
+        if not enrollment:
+            return Response({"error": "Enrollment not yours"}, status=404)
+
+        course = enrollment.course_offering.course
+
+        try:
+            summary = Summary.objects.select_related("lecture__course_offering").get(id=summary_id)
+        except Summary.DoesNotExist:
+            return Response({"error": "Summary not found"}, status=404)
+
+        if summary.lecture.course_offering.course_id != course.id:
+            return Response(
+                {"error": "This summary does not belong to your course"},
+                status=403
+            )
+
+        if not summary.file:
+            return Response({"error": "No file available"}, status=404)
+
+        return FileResponse(
+            summary.file.open("rb"),
+            as_attachment=True,
+            filename=summary.file.name
+        )
 
 
 

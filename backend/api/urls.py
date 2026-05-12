@@ -77,9 +77,15 @@ router.register("lectures", LectureViewSet, basename="lecture")
 #http://127.0.0.1:8000/api/enrollments/drop/ - هون بسمح للطالب حذف مادة معينة من الفصل الدراسي الحالي
 #http://127.0.0.1:8000/api/enrollments/current/ - هون بطلعلي المواد الفصل الحالي اللي الطالب مسجل عليها
 #http://127.0.0.1:8000/api/enrollments/courses_by_semester/<semester_id>/ - هون بطلعلي كل المواد اللي الطالب مسجل عليها في فصل دراسي معين
-#http://127.0.0.1:8000/api/enrollments/lectures_by_course/<course_id>/ - هون بطلعلي كل المحاضرات اللي متعلقة بمادة معينة
-#http://127.0.0.1:8000/api/enrollments/summaries_by_course/<course_id>/ - هون بطلعلي كل الملخصات اللي متعلقة بمادة معينة
-#http://127.0.0.1:8000/api/enrollments/mentors_by_course/<course_id>/ - هون بطلعلي كل المينتورات اللي متعلقة بمادة معينة
+#http://127.0.0.1:8000/api/enrollments/<enrollment_id>/lectures/ - هون بطلعلي كل المحاضرات اللي متعلقة بمادة معينة
+#http://127.0.0.1:8000/api/enrollments/<enrollment_id>/summaries/ - هون بطلعلي كل الملخصات اللي متعلقة بمادة معينة
+#http://127.0.0.1:8000/api/enrollments/<enrollment_id>/mentors/ - هون بطلعلي كل المينتورات اللي متعلقة بمادة معينة
+#http://127.0.0.1:8000/api/enrollments/<enrollment_id>/download/lecture/<lecture_id> - هون بسمح للطالب تحميل محاضرة معينة
+#http://127.0.0.1:8000/api/enrollments/<enrollment_id>/download/summary/<summary_id> - هون بسمح للطالب تحميل ملخص معين
+#archive:
+#http://127.0.0.1:8000/api/enrollments/<enrollment_id>/archive/<course_id>/ - هون بيسمح للطالب رؤية المحاضرات والملخصات السابقة للمادة 
+#http://127.0.0.1:8000/api/enrollments/<enrollment_id>/download/archive/lecture/<lecture_id>/ - هون بسمح للطالب تحميل محاضرة معينة من الارشيف
+#http://127.0.0.1:8000/api/enrollments/<enrollment_id>/download/archive/summary/<summary_id>/ - هون بسمح للطالب تحميل ملخص معين من الارشيف
 router.register("enrollments", EnrollmentViewSet, basename="enrollments") # هون بطلعلي كل المواد اللي الطالب مسجل عليها في الفصل الدراسي الحالي
 
 # http://127.0.0.1:8000/api/users/admin_dashboard/ هون داش بورد تبع الادمن الاحصائيات عن المستخدمين بالتطبيق
