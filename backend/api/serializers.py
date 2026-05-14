@@ -8,7 +8,7 @@ from users.models import User
 from groups.models import Group, GroupMember
 from users.models import Notification
 from courses.models import Course, CourseOffering, Enrollment, Lecture
-from mentors.models import MentorApplication
+from mentors.models import MentorApplication, MentorRenewal
 from summaries.models import Summary, SummaryVersion, SummaryReview, SummaryRating, Favorite
 
 User = get_user_model()
@@ -371,3 +371,9 @@ class SummaryRatingSerializer(serializers.ModelSerializer):
         model = SummaryRating
         fields = "__all__"
         read_only_fields = ["created_at"]
+
+class MentorRenewalSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MentorRenewal
+        fields = "__all__"
+        read_only_fields = ["created_at", "status"]

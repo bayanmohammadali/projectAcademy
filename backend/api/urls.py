@@ -30,7 +30,8 @@ from.views import (
     SupervisorViewSet,
     GroupViewSet,
     MentorApplicationViewSet,
-    SummaryViewSet
+    SummaryViewSet,
+    MentorRenewalViewSet
 
 )
 
@@ -111,13 +112,20 @@ router.register("groups", GroupViewSet, basename="group") # هون بطلعلي 
 #http://127.0.0.1:8000/api/mentor_applications/<application_id>/ai_score/ - هون السوبرفايزر يعطي AI Score لطلب مينتور معين (للسوبرفايزر)
 #للمينورات الرسميين
 #http://127.0.0.1:8000/api/mentor_applications/approved_by_course/<course_id>/ - المينتورات الموافق عليهم لمادة معيّنة
-#http://127.0.0.1:8000/api/mentor_applications/approved_by_mentor/ - هون بطلعلي كل المينتورات اللي تم الموافقة عليهم من قبل مينتور معين
+#http://127.0.0.1:8000/api/mentor_applications/approved_by_mentor/ - هون بطلعلي كل المينتورات اللي تم الموافقة عليهم من قبل سوبرفايزر اختصاص (مش شرط يكونوا تحت اشرافه)
 #للمينتورات التجريبيين
 #http://127.0.0.1:8000/api/mentor_applications/trial_by_course/<course_id>/ - المينتورات التجريبيين لمادة معيّنة
-#http://127.0.0.1:8000/api/mentor_applications/trial_by_supervisor/ - هون بطلعلي كل المينتورات التجريبيين اللي تحت اشراف سوبرفايزر معين
+#http://127.0.0.1:8000/api/mentor_applications/trial_by_supervisor/ - هون بطلعلي كل المينتورات التجريبيين اللي تحت اشراف سوبرفايزر اختصاص 
+#http://127.0.0.1:8000/api/mentor_applications/profile/ - هون المينتور يقدر يشوف ملفه الشخصي (للمينتور)
 
 router.register("mentor_applications", MentorApplicationViewSet, basename="mentor_application") # هون بطلعلي كل طلبات المينتورات اللي قدمت على مادة معينة
 #__________________________________
+#تجديد المينتورات:
+#http://127.0.0.1:8000/api/mentor_renewals/renewal_list/ - عرض كل المينتورات اللي لازم يقرر تجديدهم
+#http://127.0.0.1:8000/api/mentor_renewals/<mentor_renewals_id>/renew/ -اتخاذ القرار (تجديد / رفض) لتجديد مينتور معين
+#http://127.0.0.1:8000/api/mentor_renewals/renewed_list/ - عرض كل المينتورات اللي تم تجديدهم
+router.register("mentor_renewals", MentorRenewalViewSet, basename="mentor_renewal") # هون بطلعلي كل طلبات تجديد المينتورات اللي تحت اشراف سوبرفايزر اختصاص
+#_______________________________________
 #mentor Sumary:
 #http://127.0.0.1:8000/api/summaries/search/ - هون بطلعلي الملخصات اللي تطابق بحث معين
 #http://127.0.0.1:8000/api/summaries/create/ - هون بسمح للطالب اضافة ملخص جديد لمادة معينة
@@ -130,5 +138,11 @@ router.register("mentor_applications", MentorApplicationViewSet, basename="mento
 #http://127.0.0.1:8000/api/summaries/<summary_id>/review/ - هون السوبرفايزر يقدر يوافق او يرفض ملخص معين
 router.register("summaries", SummaryViewSet, basename="summary") # هون بطلعلي كل الملخصات اللي بتتبع مادة معينة
 
-
+#_____
+#ChatRoom
+#RatingMentor
+#______
+#Survey
+#_____
+#Forget the password
 urlpatterns += router.urls

@@ -2,7 +2,7 @@
 from rest_framework.decorators import APIView, action
 from rest_framework import generics, request
 from rest_framework.permissions import AllowAny
-from django.db.models import Q, Count
+from django.db.models import Q, Count, Avg
 from rest_framework.decorators import action 
 from academic.signals import notify_students_and_mentors
 from .serializers import CourseNameSerializer, CourseOfferingNameSerializer, CurrentSemesterEnrollmentSerializer, RegisterSerializer, StudentSemesterSerializer, SupervisorCreateSerializer, SupervisorSerializer
@@ -14,7 +14,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from datetime import timedelta
 from django.utils import timezone
 from .utils import send_notification
-
+from PyPDF2 import PdfReader
 
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
@@ -44,6 +44,7 @@ from .serializers import (
     SummaryNameSerializer,
     SummaryReviewSerializer,
     SummaryVersionSerializer,
+    MentorRenewalSerializer
 
 
 )
@@ -54,7 +55,7 @@ from groups.models import Group, GroupMessage, GroupFile, GroupMember
 from courses.models import Course, CourseOffering, Enrollment, Lecture
 from majors.models import Major
 from summaries.models import Summary
-from mentors.models import MentorApplication, MentorRenewal
+from mentors.models import MentorApplication, MentorRenewal, ChatRoom, ChatMessage, MentorRating
 from summaries.models import Summary, SummaryVersion, SummaryReview, SummaryRating
 
 User = get_user_model()
@@ -559,23 +560,29 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
 #تفعيل المادة من قبل السوبرفايزر (لما يضغط على تفعيل المادة، بتصير متاحة للطلاب والمينتورين)
     @action(detail=False, methods=["post"], url_path="add_and_activate")
     def add_and_activate(self, request):
+        user = request.user
+
+        # فقط السوبرفايزر الرئيسي
+        if user.role != "supervisor" or not user.is_primary_supervisor:
+            return Response(
+                {"error": "Only the primary supervisor can activate courses"},
+                status=403
+            )
+
         course_id = request.data.get("course")
         if not course_id:
             return Response({"error": "Course ID is required"}, status=400)
 
-    # نجيب الفصل النشط
         semester = Semester.objects.filter(is_active=True).first()
         if not semester:
             return Response({"error": "No active semester found"}, status=400)
 
-    # ننشئ CourseOffering
         offering, created = CourseOffering.objects.get_or_create(
             course_id=course_id,
             semester=semester,
-            supervisor=request.user
+            supervisor=user
         )
 
-    # نفعل المادة مباشرة
         offering.is_active = True
         offering.save()
 
@@ -585,8 +592,18 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
         })
 
 
+
     @action(detail=True, methods=["post"], url_path="deactivate")
     def deactivate(self, request, pk=None):
+        user = request.user
+
+        # فقط السوبرفايزر الرئيسي
+        if user.role != "supervisor" or not user.is_primary_supervisor:
+            return Response(
+                {"error": "Only the primary supervisor can activate courses"},
+                status=403
+            )
+        
         offering = self.get_object()
 
         offering.is_active = False
@@ -610,6 +627,14 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
             offering = CourseOffering.objects.get(id=pk)
         except CourseOffering.DoesNotExist:
             return Response({"error": "Course offering not found"}, status=404)
+
+        title = request.data.get("title")
+
+        if Lecture.objects.filter(course_offering=offering, title=title).exists():
+            return Response(
+                {"error": "Lecture with this title already exists for this course"},
+                status=400
+            )
 
         # 2) تجهيز البيانات
         serializer = LectureSerializer(data={
@@ -1382,6 +1407,15 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         if MentorApplication.objects.filter(student=student, course_id=course_id).exists():
             return Response({"error": "You already applied for this course"}, status=400)
 
+        # منع التقديم لنفس المادة مرتين
+        if MentorApplication.objects.filter(
+            student=student,
+            course_id=course_id,
+            status__in=["pending", "trial"]
+        ).exists():
+            return Response({"error": "You already applied for this course"}, status=400)
+
+
         application = MentorApplication.objects.create(
             student=student,
             course_id=course_id,
@@ -1395,7 +1429,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
         # إعدادات التحقق
         MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB
-        allowed_types = ["application/pdf", "image/jpeg", "image/png"]
+        allowed_types = ["application/pdf"]
 
         # دالة للتحقق من الملف
         def validate_file(f):
@@ -1409,18 +1443,13 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
             # التحقق من تلف الملف
             if f.content_type == "application/pdf":
-                from PyPDF2 import PdfReader
+                
                 try:
                     PdfReader(f)
                 except:
                     return "PDF file is corrupted"
 
-            if f.content_type in ["image/jpeg", "image/png"]:
-                from PIL import Image
-                try:
-                    Image.open(f).verify()
-                except:
-                    return "Image file is corrupted"
+            
 
             return None
 
@@ -1440,6 +1469,17 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
         application.save()
 
+         # إرسال إشعار لكل السوبرفايزرات تبع نفس الـ major
+        supervisors = User.objects.filter(
+            role="supervisor",
+            major_id=student.major_id
+        )
+        for sup in supervisors:
+            Notification.objects.create(
+                user_id=sup.id,
+                type="mentor_application",
+                message=f"New mentor application from {student.first_name} {student.last_name}"
+            )
 
         return Response({
             "message": "Application submitted successfully",
@@ -1450,8 +1490,8 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["get"], url_path="my_applications")
     def my_applications(self, request):
         apps = MentorApplication.objects.filter(student=request.user)
-        serializer = MentorApplicationSerializer(apps, many=True)
-        return Response(serializer.data)
+        return Response(MentorApplicationSerializer(apps, many=True).data)
+
 
     # 4) السوبرفايزر يشوف الطلبات المعلّقة
     @action(detail=False, methods=["get"], url_path="pending")
@@ -1461,17 +1501,20 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         if user.role != "supervisor":
             return Response({"error": "Only supervisors can view pending applications"}, status=403)
 
-        applications = MentorApplication.objects.filter(status="pending").order_by("-created_at")
-
-        data = []
-        for app in applications:
-            data.append({
-                "id": app.id,
-                "student_id": app.student.id,
-                "student_name": f"{app.student.first_name} {app.student.last_name}",
-                "course_name": app.course.name if app.course else None,
-                "created_at": app.created_at,
-            })
+        applications = MentorApplication.objects.filter(
+            status="pending",
+            course__major_id=user.major_id
+        ).order_by("-created_at")
+        data = [
+        {
+            "id": app.id,
+            "student_id": app.student.id,
+            "student_name": f"{app.student.first_name} {app.student.last_name}",
+            "course_name": app.course.name,
+            "created_at": app.created_at,
+        }
+        for app in applications
+        ]
 
         return Response({"pending_applications": data}, status=200)
 
@@ -1489,6 +1532,12 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         except MentorApplication.DoesNotExist:
             return Response({"error": "Application not found"}, status=404)
 
+        if app.is_processing and app.processing_by_id != user.id:
+            return Response({"error": "This application is being reviewed by another supervisor"}, status=403)
+
+        app.is_processing = True
+        app.processing_by_id = user.id
+        app.save()
         data = {
             "id": app.id,
             "student_id": app.student.id,
@@ -1523,7 +1572,10 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
             app = MentorApplication.objects.get(id=pk)
         except MentorApplication.DoesNotExist:
             return Response({"error": "Application not found"}, status=404)
-
+        # إذا الطلب مقفول على سوبرفايزر تاني
+        if app.is_processing and app.processing_by_id != user.id:
+            return Response({"error": "This application is being reviewed by another supervisor"}, status=403)
+    
         decision = request.data.get("decision")  # trial / reject
         note = request.data.get("review_note", "")
 
@@ -1534,12 +1586,12 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
         if decision == "trial":
             app.status = "trial"
-            app.trial_end_date = timezone.now() + timedelta(days=7)
+            app.trial_end_date = timezone.now() + timedelta(days=15)
 
             send_notification(
             app.student,
             "Trial Period Started",
-            "You have been accepted as a trial mentor for 7 days."
+            "You have been accepted as a trial mentor for 15 days."
         )
         else:
             app.status = "rejected"
@@ -1550,7 +1602,9 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
             "Application Rejected",
             "Unfortunately, your mentor application has been rejected."
         )
-
+        app.is_processing = False
+        app.processing_by = None
+        app.processing_at = None
         app.save()
 
         return Response({
@@ -1670,7 +1724,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
         return Response({"mentors": data})
 
-    # 10) كل المينتورات الموافق عليهم عند هذا السوبرفايزر
+    # 10) كل المينتورات الموافق عليهم عند  السوبرفايزر
     @action(detail=False, methods=["get"], url_path="approved_by_mentor")
     def approved_by_mentor(self, request):
         if request.user.role != "supervisor":
@@ -1678,6 +1732,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
         apps = MentorApplication.objects.filter(
             status="approved",
+            course__major_id=request.user.major_id
         )
 
         data = [
@@ -1717,7 +1772,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
         apps = MentorApplication.objects.filter(
             status="trial",
-            student__supervisor=request.user
+            course__major_id=request.user.major_id 
         )
 
         data = [
@@ -1732,6 +1787,63 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         ]
 
         return Response({"trial_mentors": data})
+
+    @action(detail=False, methods=["get"], url_path="profile")
+    def mentor_profile(self, request):
+        user = request.user
+
+        # السماح فقط إذا عنده طلب مينتور trial أو approved
+        app = MentorApplication.objects.filter(student=user).order_by("-created_at").first()
+
+        if not app or app.status not in ["trial", "approved"]:
+            return Response({"error": "You are not a mentor or trial mentor"}, status=403)
+
+        mentor = user
+
+        # التقييمات
+        ratings = mentor.received_ratings.all()
+        avg_rating = ratings.aggregate(Avg("rating_value"))["rating_value__avg"]
+        avg_rating = round(avg_rating, 2) if avg_rating else None
+        total_ratings = ratings.count()
+
+        # الشات لسا مو جاهز
+        total_chats = 0
+        response_rate = 0
+
+        # كل المواد سواء trial أو approved
+        apps = MentorApplication.objects.filter(student=mentor)
+
+        courses = [
+            {
+                "id": a.course.id,
+                "name": a.course.name,
+                "status": a.status
+            }
+            for a in apps
+        ]
+
+        # تحديد حالة المينتور
+        if any(a.status == "approved" for a in apps):
+            status = "approved"
+        else:
+            status = "trial"
+
+        data = {
+            "id": mentor.id,
+            "name": f"{mentor.first_name} {mentor.last_name}",
+            "bio": mentor.bio,
+            "status": status,
+            "avg_rating": avg_rating,
+            "total_ratings": total_ratings,
+            "total_chats": total_chats,
+            "response_rate": response_rate,
+            "courses": courses
+        }
+
+        return Response(data, status=200)
+
+
+
 
 
 class SummaryViewSet(viewsets.ModelViewSet):
@@ -1931,10 +2043,133 @@ class SummaryViewSet(viewsets.ModelViewSet):
 
         return Response(data, status=200)
 
+class MentorRenewalViewSet(viewsets.ModelViewSet):
+    queryset = MentorRenewal.objects.all()
+    serializer_class = MentorRenewalSerializer
+    permission_classes = [IsAuthenticated]
 
+    @action(detail=False, methods=["get"], url_path="renewal_list")
+    def renewal_list(self, request):
+        user = request.user
 
+        if user.role != "supervisor":
+            return Response({"error": "Only supervisors can access this endpoint"}, status=403)
 
+        # كل المينتورات الرسميين ضمن اختصاص السوبرفايزر
+        approved_apps = MentorApplication.objects.filter(
+            status="approved",
+            course__major_id=user.major_id
+        ).select_related("student", "course")
 
+        result = []
 
+        for app in approved_apps:
+            mentor = app.student
 
+            # حساب التقييم
+            ratings = mentor.received_ratings.all()
+            avg_rating = ratings.aggregate(Avg("rating_value"))["rating_value__avg"]
+            avg_rating = round(avg_rating, 2) if avg_rating else None
 
+            # عدد المحادثات
+            total_chats = ChatRoom.objects.filter(mentor=mentor).count()
+
+            # نسبة الرد
+            replied = ChatRoom.objects.filter(mentor=mentor, messages__sender=mentor).distinct().count()
+            response_rate = (replied / total_chats * 100) if total_chats > 0 else 0
+
+            result.append({
+                "mentor_id": mentor.id,
+                "mentor_name": f"{mentor.first_name} {mentor.last_name}",
+                "course_id": app.course.id,
+                "course_name": app.course.name,
+                "avg_rating": avg_rating,
+                "total_chats": total_chats,
+                "response_rate": round(response_rate, 1),
+                "warning": "Low rating, renewal not recommended" if avg_rating and avg_rating < 2.5 else None
+            })
+
+        return Response({"mentors": result}, status=200)
+    
+    @action(detail=True, methods=["post"], url_path="renew")
+    def renew_mentor(self, request, pk=None):
+        user = request.user
+
+        if user.role != "supervisor":
+            return Response({"error": "Only supervisors can perform renewals"}, status=403)
+
+        try:
+            mentor = User.objects.get(id=pk, role="mentor")
+        except User.DoesNotExist:
+            return Response({"error": "Mentor not found"}, status=404)
+
+        decision = request.data.get("decision")
+        course_offering_id = request.data.get("course_offering")
+
+        if decision not in ["renew", "reject"]:
+            return Response({"error": "Invalid decision"}, status=400)
+
+        if not course_offering_id:
+            return Response({"error": "course_offering is required"}, status=400)
+
+        # تحقق من وجود الـ CourseOffering
+        try:
+            course_offering = CourseOffering.objects.get(id=course_offering_id)
+        except CourseOffering.DoesNotExist:
+            return Response({"error": "Course offering not found"}, status=404)
+
+        # منع التكرار لنفس المينتور والفصل
+        if MentorRenewal.objects.filter(mentor=mentor, course_offering=course_offering).exists():
+            return Response({"error": "Renewal already exists for this mentor and course offering"}, status=400)
+
+        # إنشاء سجل التجديد
+        renewal = MentorRenewal.objects.create(
+            mentor=mentor,
+            course_offering=course_offering,
+            is_renewed=(decision == "renew"),
+            renewed_by=user
+        )
+
+        # تحديث حالة المينتور
+        if decision == "reject":
+            mentor.role = "student"
+            mentor.save()
+
+            send_notification(
+                mentor,
+                "Mentor Renewal Decision",
+                "Your mentor role was not renewed for the new semester."
+            )
+            return Response({"message": "Mentor renewal rejected"}, status=200)
+
+        else:
+            send_notification(
+                mentor,
+                "Mentor Renewal Approved",
+                "Your mentor role has been renewed for the new semester."
+            )
+            return Response({"message": "Mentor renewed successfully"}, status=200)
+        
+        
+    @action(detail=False, methods=["get"], url_path="renewed_list")
+    def renewed_list(self, request):
+        user = request.user
+
+        if user.role != "supervisor":
+            return Response({"error": "Only supervisors can access this endpoint"}, status=403)
+
+        # كل سجلات التجديد اللي عملها السوبرفايزر
+        renewals = MentorRenewal.objects.filter(renewed_by=user).select_related("mentor", "course_offering")
+
+        result = []
+        for r in renewals:
+            result.append({
+                "mentor_id": r.mentor.id,
+                "mentor_name": f"{r.mentor.first_name} {r.mentor.last_name}",
+                "course_offering_id": r.course_offering.id,
+                "course_offering_name": str(r.course_offering),
+                "is_renewed": r.is_renewed,
+                "created_at": r.created_at
+            })
+
+        return Response({"renewals": result}, status=200)
