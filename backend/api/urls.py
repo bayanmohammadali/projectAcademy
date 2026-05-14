@@ -50,9 +50,11 @@ router.register("supervisors", SupervisorViewSet, basename="supervisor")
 #http://127.0.0.1:8000/api/notifications/ رؤية كل الاشعارات تبعاايا حدا بالتطبيق حتى لو مشرف 
 router.register("notifications", NotificationViewSet, basename="notification")
 
-
-# http://127.0.0.1:8000/api/semesters/latest/ - هون بطلعلي الفصل الدراسي الحالي اللي active
+#http://127.0.0.1:8000/api/semesters/create/ - هون بسمح للادمن انشاء فصل دراسي جديد
+#http://127.0.0.1:8000/api/semesters/latest/ - هون بطلعلي الفصل الدراسي الحالي اللي active
 #http://127.0.0.1:8000/api/semesters/names/ - هون بطلعلي اسماء كل الفصول الدراسية
+#http://127.0.0.1:8000/api/semesters/<semester_id>/assign_supervisors/ - هون بسمح للادمن يحدد المشرفين اللي بيشرفوا على فصل دراسي معين
+#http://127.0.0.1:8000/api/semesters/<semester_id>/majors_supervisors/ - هون بطلعلي كل المشرفين اللي بيشرفوا على فصل دراسي معين مع التخصصات اللي بيشرفوا عليها)
 router.register("semesters", SemesterViewSet, basename="semester")
 
 #http://127.0.0.1:8000/api/courses/my_major/ هون بطلعلي المواد يلي بتتبع تخصص معين 

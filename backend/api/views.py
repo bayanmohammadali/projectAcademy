@@ -375,6 +375,90 @@ class SemesterViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(latest)
         return Response(serializer.data)
 
+    @action(detail=True, methods=["post"], url_path="assign_supervisors")
+    def assign_supervisors(self, request, pk=None):
+        user = request.user
+        if user.role != "admin":
+            return Response({"error": "Only admins can assign supervisors"}, status=403)
+
+        try:
+            semester = Semester.objects.get(id=pk)
+        except Semester.DoesNotExist:
+            return Response({"error": "Semester not found"}, status=404)
+
+        assignments = request.data.get("assignments", [])
+        result = []
+
+        for item in assignments:
+            major_id = item.get("major_id")
+            supervisor_id = item.get("supervisor_id")
+
+            try:
+                major = Major.objects.get(id=major_id)
+            except Major.DoesNotExist:
+                result.append({"major_id": major_id, "error": "Major not found"})
+                continue
+
+            try:
+                supervisor = User.objects.get(id=supervisor_id, role="supervisor")
+            except User.DoesNotExist:
+                result.append({"major_id": major_id, "error": "Supervisor not found"})
+                continue
+
+            # نحدد إنو هذا السوبرفايزر هو الأساسي لهالفرع
+            supervisor.is_primary_supervisor = True
+            supervisor.save()
+
+            # نربط المواد بالفصل والسوبرفايزر
+            courses = Course.objects.filter(major=major)
+            for course in courses:
+                CourseOffering.objects.get_or_create(
+                    course=course,
+                    semester=semester,
+                    supervisor=supervisor
+                )
+
+            result.append({
+                "major_id": major.id,
+                "major_name": major.name,
+                "supervisor_id": supervisor.id,
+                "supervisor_name": f"{supervisor.first_name} {supervisor.last_name}"
+            })
+
+        return Response({"assignments": result}, status=200)
+
+    @action(detail=True, methods=["get"], url_path="majors_supervisors")
+    def majors_supervisors(self, request, pk=None):
+        try:
+            semester = Semester.objects.get(id=pk)
+        except Semester.DoesNotExist:
+            return Response({"error": "Semester not found"}, status=404)
+
+        majors = Major.objects.all()
+        result = []
+
+        for major in majors:
+            supervisor = User.objects.filter(
+                major=major,
+                role="supervisor",
+                is_primary_supervisor=True
+            ).first()
+
+            result.append({
+                "major_id": major.id,
+                "major_name": major.name,
+                "supervisor_id": supervisor.id if supervisor else None,
+                "supervisor_name": f"{supervisor.first_name} {supervisor.last_name}" if supervisor else None
+            })
+
+        return Response({
+            "semester_id": semester.id,
+            "semester_name": semester.name,
+            "majors": result
+        }, status=200)
+
+
+
     
 
 class CourseViewSet(viewsets.ModelViewSet):
@@ -2150,7 +2234,7 @@ class MentorRenewalViewSet(viewsets.ModelViewSet):
             )
             return Response({"message": "Mentor renewed successfully"}, status=200)
         
-        
+
     @action(detail=False, methods=["get"], url_path="renewed_list")
     def renewed_list(self, request):
         user = request.user
