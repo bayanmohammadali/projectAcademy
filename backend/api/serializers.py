@@ -5,7 +5,7 @@ from django.contrib.auth.password_validation import validate_password
 from academic.models import University,AcademicYear, Semester
 from majors.models import Major
 from users.models import User
-from groups.models import Group, GroupMember
+from groups.models import Group, GroupMember, GroupMessage
 from users.models import Notification
 from courses.models import Course, CourseOffering, Enrollment, Lecture
 from mentors.models import MentorApplication, MentorRenewal
@@ -213,7 +213,12 @@ class GroupMemberSerializer(serializers.ModelSerializer):
         model = GroupMember
         fields = "__all__"
 
-
+class GroupMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GroupMessage
+        fields = "__all__"
+        read_only_fields = ["created_at"]
+        
 class EnrollmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Enrollment

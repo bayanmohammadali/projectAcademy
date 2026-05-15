@@ -39,6 +39,7 @@ from .serializers import (
     UserSerializer,
     GroupsSerializer,
     GroupNameSerializer,
+    GroupMessageSerializer,
     MentorApplicationSerializer,
     SummarySerializer,
     SummaryNameSerializer,
@@ -215,9 +216,6 @@ class AcademicYearViewSet(viewsets.ModelViewSet):
         serializer = AcademicYearNamesSerializer(academic_years, many=True)
         return Response(serializer.data)
     
-
- 
-
 class UniversityViewSet(viewsets.ModelViewSet):
     queryset = University.objects.all()
     serializer_class = UniversitySerializer
@@ -311,6 +309,13 @@ class SupervisorViewSet(viewsets.ModelViewSet):
         response = super().update(request, *args, **kwargs)
         return Response({
             "message": "Supervisor updated successfully",
+            "supervisor": response.data
+        })
+
+    def destroy(self, request, *args, **kwargs):
+        response = super().destroy(request, *args, **kwargs)
+        return Response({
+            "message": "Supervisor deleted successfully",
             "supervisor": response.data
         })
     
@@ -476,7 +481,7 @@ class CourseViewSet(viewsets.ModelViewSet):
         course = serializer.save()
         return Response({
             "message": "Course created successfully",
-            "course": serializer.data
+            "course": course
         }, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
@@ -528,22 +533,27 @@ class CourseViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-
- 
 class LectureViewSet(viewsets.ModelViewSet):
     queryset = Lecture.objects.all()
     serializer_class = LectureSerializer
-    permission_classes = [IsSupervisor]
+    permission_classes = [IsAuthenticated()]
     def get_permissions(self):
         if self.request.method in ["GET"]:
             return [IsAuthenticated()]  
-        return [IsAuthenticated(), IsSupervisor()]
+        return [IsAuthenticated(), (IsSupervisor()| IsAdmin)]
     
     def get_queryset(self):
         queryset = Lecture.objects.all()
         return queryset
 
-    
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        lecture = serializer.save()
+        return Response({
+            "message": "Lecture created successfully",
+            "lecture": lecture
+        }, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
         lecture = self.get_object()
@@ -597,7 +607,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
 class CourseOfferingViewSet(viewsets.ModelViewSet):
     serializer_class = CourseOfferingSerializer
-    permission_classes = [IsAuthenticated, (IsSupervisor | IsAdmin | IsTrialOrMentor | IsStudent)]
+    permission_classes = [IsAuthenticated, (IsSupervisor | IsAdmin )]
 
     def get_queryset(self):
         semester = Semester.objects.filter(is_active=True).first()
@@ -645,9 +655,15 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
         user = request.user
 
         # فقط السوبرفايزر الرئيسي
-        if user.role != "supervisor" or not user.is_primary_supervisor:
+        if user.role == "supervisor" and not user.is_primary_supervisor:
             return Response(
                 {"error": "Only the primary supervisor can activate courses"},
+                status=403
+            )
+
+        if user.role not in  "admin":
+            return Response(
+                {"error": "Only admins can activate courses"},
                 status=403
             )
 
@@ -680,7 +696,7 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
         user = request.user
 
         # فقط السوبرفايزر الرئيسي
-        if user.role != "supervisor" or not user.is_primary_supervisor:
+        if user.role != "supervisor" and user.role != "admin" or not user.is_primary_supervisor:
             return Response(
                 {"error": "Only the primary supervisor can activate courses"},
                 status=403
@@ -700,9 +716,9 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
     def add_lecture(self, request, pk=None):
         user = request.user
 
-        # فقط السوبرفايزر يضيف محاضرات
-        if user.role != "supervisor":
-            return Response({"error": "Only supervisors can add lectures"}, status=403)
+        #  السوبرفايزر يضيف محاضرات
+        if user.role != "supervisor" or user.role != "admin":
+            return Response({"error": "Only supervisors or Admin can add lectures"}, status=403)
 
         # 1) نجيب الـ offering
         try:
@@ -781,9 +797,8 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
     def remove_lecture(self, request, pk=None, lecture_id=None):
         user = request.user
 
-        # فقط السوبرفايزر يقدر يحذف محاضرات
-        if user.role != "supervisor":
-            return Response({"error": "Only supervisors can delete lectures"}, status=403)
+        if user.role != "supervisor" and user.role != "admin":
+            return Response({"error": "Only supervisors and admin can delete lectures"}, status=403)
 
         # 1) تأكيد وجود الـ offering
         try:
@@ -803,7 +818,7 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
         return Response({"message": "Lecture removed successfully"}, status=200)
     
 class EnrollmentViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAuthenticated, (IsStudent | IsTrialOrMentor)]
+    permission_classes = [IsAuthenticated]
 
     def get_serializer_class(self):
         if self.action in ["current", "current_semester_courses"]:
@@ -814,7 +829,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         return Enrollment.objects.filter(student=user)   
-
+    
     @action(detail=False, methods=["post"], url_path="register")
     def register_in_active_semester(self, request):
         course_id = request.data.get("course")
@@ -907,8 +922,6 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         "lectures": data
     })
 
-
-
     @action(detail=True, methods=["get"], url_path="summaries")
     def summaries_by_course(self, request, pk=None):
         user = request.user
@@ -942,9 +955,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         "count": len(data),
         "summaries": data
     })
-
-       
-    
+   
     @action(detail=True, methods=["get"], url_path="mentors")
     def mentors_by_enrollment(self, request, pk=None):
         user = request.user
@@ -1006,8 +1017,6 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             "mentors": mentors
         })
 
-
-    
     @action(detail=False, methods=["post"], url_path="drop")
     def drop_course(self, request):
         course_id = request.data.get("course")
@@ -1329,7 +1338,7 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
 
 class StudentSemesterView(APIView):
-    permission_classes = [IsAuthenticated, (IsStudent | IsTrialOrMentor)]
+    permission_classes = [IsAuthenticated, (IsStudent | IsTrialOrMentor | IsAdmin | IsSupervisor)]
 
     def get(self, request):
 
@@ -1352,7 +1361,6 @@ class StudentSemesterView(APIView):
 
         serializer = StudentSemesterSerializer(semesters, many=True)
         return Response(serializer.data)
-
 
 class OfferingLectureView(APIView):
     permission_classes = [IsAuthenticated]
@@ -1488,6 +1496,10 @@ class GroupViewSet(viewsets.ModelViewSet):
 
         return Response(data)
 
+class GroupMessageViewSet(viewsets.ModelViewSet):
+    queryset = GroupMessage.objects.all()
+    serializer_class = GroupMessageSerializer
+    permission_classes = [IsAuthenticated]
 
 class MentorApplicationViewSet(viewsets.ModelViewSet):
     serializer_class = MentorApplicationSerializer
@@ -1613,8 +1625,8 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     def pending(self, request):
         user = request.user
 
-        if user.role != "supervisor":
-            return Response({"error": "Only supervisors can view pending applications"}, status=403)
+        if user.role != "supervisor" or user.role != "admin":
+            return Response({"error": "Only supervisors or admin can view pending applications"}, status=403)
 
         applications = MentorApplication.objects.filter(
             status="pending",
@@ -1639,8 +1651,8 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         user = request.user
 
         # فقط السوبرفايزر يشوف التفاصيل
-        if user.role != "supervisor":
-            return Response({"error": "Only supervisors can view application details"}, status=403)
+        if user.role != "supervisor" or user.role != "admin":
+            return Response({"error": "Only supervisors and admin can view application details"}, status=403)
 
         try:
             app = MentorApplication.objects.get(id=pk)
@@ -1680,8 +1692,8 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     def review(self, request, pk=None):
         user = request.user
 
-        if user.role != "supervisor":
-            return Response({"error": "Only supervisors can review applications"}, status=403)
+        if user.role != "supervisor" or user.role != "admin":
+            return Response({"error": "Only supervisors and admin can review applications"}, status=403)
 
         try:
             app = MentorApplication.objects.get(id=pk)
@@ -1734,9 +1746,9 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     def finalize(self, request, pk=None):
         user = request.user
 
-        # فقط السوبرفايزر
-        if user.role != "supervisor":
-            return Response({"error": "Only supervisors can finalize applications"}, status=403)
+        # فقط السوبرفايزر أو المشرف
+        if user.role != "supervisor" or user.role != "admin":
+            return Response({"error": "Only supervisors and admin can finalize applications"}, status=403)
 
         # جلب الطلب
         try:
@@ -1797,8 +1809,8 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     # 8) السوبرفايزر يعطي AI Score
     @action(detail=True, methods=["post"], url_path="ai_score")
     def ai_score_application(self, request, pk=None):
-        if request.user.role != "supervisor":
-            return Response({"error": "Only supervisors can score applications"}, status=403)
+        if request.user.role != "supervisor" or  request.user.role != "admin":
+            return Response({"error": "Only supervisors and admin can score applications"}, status=403)
 
         app = self.get_object()
         score = request.data.get("score")
@@ -1842,7 +1854,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     # 10) كل المينتورات الموافق عليهم عند  السوبرفايزر
     @action(detail=False, methods=["get"], url_path="approved_by_mentor")
     def approved_by_mentor(self, request):
-        if request.user.role != "supervisor":
+        if request.user.role != "supervisor" or request.user.role != "admin":
             return Response({"error": "Only supervisors can access this endpoint"}, status=403)
 
         apps = MentorApplication.objects.filter(
@@ -1882,8 +1894,8 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     #12) 
     @action(detail=False, methods=["get"], url_path="trial_by_supervisor")
     def trial_by_supervisor(self, request):
-        if request.user.role != "supervisor":
-            return Response({"error": "Only supervisors can access this endpoint"}, status=403)
+        if request.user.role != "supervisor" or request.user.role != "admin":
+            return Response({"error": "Only supervisors or admin can access this endpoint"}, status=403)
 
         apps = MentorApplication.objects.filter(
             status="trial",

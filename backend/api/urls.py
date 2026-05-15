@@ -29,6 +29,7 @@ from.views import (
     UserViewSet,
     SupervisorViewSet,
     GroupViewSet,
+    GroupMessageViewSet,
     MentorApplicationViewSet,
     SummaryViewSet,
     MentorRenewalViewSet,
@@ -103,6 +104,7 @@ router.register("users", UserViewSet, basename="users")
 #groups:
 #http://127.0.0.1:8000/api/groups/my_groups/<course_id>/ - هون بطلعلي كل المجموعات اللي الطالب مشارك فيها واللي بتتبع مادة معينة
 router.register("groups", GroupViewSet, basename="group") # هون بطلعلي كل المجموعات اللي الطالب مشارك فيهـا
+router.register("groupMessages",GroupMessageViewSet, basename="groupMessage") #ادارة لرسائل المجموعات 
 #____________________________________________________________
 #mentor
 #http://127.0.0.1:8000/api/mentor_applications/apply/ - هون بسمح للطالب تقديم طلب مينتور لمادة معينة
