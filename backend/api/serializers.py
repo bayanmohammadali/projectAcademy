@@ -377,3 +377,10 @@ class MentorRenewalSerializer(serializers.ModelSerializer):
         model = MentorRenewal
         fields = "__all__"
         read_only_fields = ["created_at", "status"]
+
+
+class FavoriteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Favorite
+        fields = "__all__"
+        read_only_fields = ["created_at"]

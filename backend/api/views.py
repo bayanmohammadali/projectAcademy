@@ -44,7 +44,8 @@ from .serializers import (
     SummaryNameSerializer,
     SummaryReviewSerializer,
     SummaryVersionSerializer,
-    MentorRenewalSerializer
+    MentorRenewalSerializer,
+    FavoriteSerializer
 
 
 )
@@ -56,7 +57,7 @@ from courses.models import Course, CourseOffering, Enrollment, Lecture
 from majors.models import Major
 from summaries.models import Summary
 from mentors.models import MentorApplication, MentorRenewal, ChatRoom, ChatMessage, MentorRating
-from summaries.models import Summary, SummaryVersion, SummaryReview, SummaryRating
+from summaries.models import Summary, SummaryVersion, SummaryReview, SummaryRating, Favorite
 
 User = get_user_model()
 
@@ -577,9 +578,6 @@ class LectureViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-
-
-
 class NotificationViewSet(viewsets.ModelViewSet):
     queryset = Notification.objects.all()
     serializer_class = NotificationSerializer
@@ -904,7 +902,10 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             for lec in lectures
         ]
 
-        return Response(data)
+        return Response({
+        "count": len(data),
+        "lectures": data
+    })
 
 
 
@@ -924,7 +925,8 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             )
 
         summaries = Summary.objects.filter(
-            lecture__course_offering=enrollment.course_offering
+            lecture__course_offering=enrollment.course_offering,
+            status="approved"
         )
 
         data = [
@@ -936,7 +938,10 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             for s in summaries
         ]
 
-        return Response(data)
+        return Response({
+        "count": len(data),
+        "summaries": data
+    })
 
        
     
@@ -956,25 +961,51 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
                 status=404
             )
 
-        # 2) نجيب الـ course_offering
         course_offering = enrollment.course_offering
+        course = course_offering.course
 
-        # 3) نجيب المينتورات من MentorRenewal
-        mentor_links = MentorRenewal.objects.filter(
-            course_offering_id=course_offering.id,
+        # -----------------------------
+        # 2) المينتور الرسمي (renewed)
+        # -----------------------------
+        renewed_links = MentorRenewal.objects.filter(
+            course_offering=course_offering,
             is_renewed=True
         ).select_related("mentor")
 
-        mentors = [
+        official_mentors = [
             {
                 "id": m.mentor.id,
                 "name": f"{m.mentor.first_name} {m.mentor.last_name}",
                 "email": m.mentor.email
             }
-            for m in mentor_links
+            for m in renewed_links
         ]
 
-        return Response(mentors)
+        # -----------------------------
+        # 3) المينتور التجريبي (trial)
+        # -----------------------------
+        trial_apps = MentorApplication.objects.filter(
+            course=course,
+            status="trial"
+        ).select_related("student")
+
+        trial_mentors = [
+            {
+                "id": app.student.id,
+                "name": f"{app.student.first_name} {app.student.last_name}",
+                "email": app.student.email
+            }
+            for app in trial_apps
+        ]
+
+        # دمج الاثنين
+        mentors = official_mentors + trial_mentors
+
+        return Response({
+            "count": len(mentors),
+            "mentors": mentors
+        })
+
 
     
     @action(detail=False, methods=["post"], url_path="drop")
@@ -1976,6 +2007,17 @@ class SummaryViewSet(viewsets.ModelViewSet):
                 status=403
             )
 
+        uploaded_file = request.FILES.get("file")
+        if not uploaded_file:
+            return Response({"error": "File is required"}, status=400)
+
+        import os
+        ext = os.path.splitext(uploaded_file.name)[1].lower()
+        if ext not in [".pdf", ".docx"]:
+            return Response({"error": "Only PDF or DOCX files are allowed"}, status=400)
+
+        if uploaded_file.size >  20 * 1024 * 1024:  # 25MB
+            return Response({"error": "File size exceeds 25MB limit"}, status=400)
         # 3) إنشاء Summary
         summary = Summary.objects.create(
             title=request.data.get("title"),
@@ -2000,13 +2042,39 @@ class SummaryViewSet(viewsets.ModelViewSet):
     def my_summaries(self, request):
         user = request.user
 
-        # 1) نجيب ملخصات المينتور نفسه
-        summaries = Summary.objects.filter(
-            student=user
-        ).order_by("-created_at")
+        summaries = Summary.objects.filter(student=user).order_by("-created_at")
 
-        serializer = SummarySerializer(summaries, many=True)
-        return Response(serializer.data, status=200)
+        data = []
+        for s in summaries:
+            active_version = s.versions.filter(is_active=True).first()
+            ratings_data = []
+            avg_rating = None
+
+            if active_version:
+                ratings = active_version.ratings.all()
+                ratings_data = [
+                    {
+                        "rating": r.rating_value,
+                        "comment": r.comment,
+                        "created_at": r.created_at
+                    }
+                    for r in ratings
+                ]
+                if ratings.exists():
+                    avg_rating = round(sum(r.rating_value for r in ratings) / ratings.count(), 2)
+
+            data.append({
+                "id": s.id,
+                "title": s.title,
+                "lecture": s.lecture.title,
+                "status": s.status,
+                "created_at": s.created_at,
+                "avg_rating": avg_rating,
+                "ratings": ratings_data
+            })
+
+        return Response(data, status=200)
+
 
 
 
@@ -2126,6 +2194,41 @@ class SummaryViewSet(viewsets.ModelViewSet):
             })
 
         return Response(data, status=200)
+    
+    @action(detail=True, methods=["post"], url_path="rate")
+    def rate_summary(self, request, pk=None):
+        user = request.user
+
+        try:
+            summary = Summary.objects.get(id=pk)
+        except Summary.DoesNotExist:
+            return Response({"error": "Summary not found"}, status=404)
+
+        # نجيب آخر نسخة فعّالة
+        active_version = summary.versions.filter(is_active=True).first()
+        if not active_version:
+            return Response({"error": "No active version found"}, status=404)
+
+        rating_value = request.data.get("rating_value")
+        comment = request.data.get("comment", "")
+
+        if not rating_value:
+            return Response({"error": "rating_value is required"}, status=400)
+
+        # إنشاء تقييم
+        rating = SummaryRating.objects.create(
+            student=user,
+            summary_version=active_version,
+            rating_value=rating_value,
+            comment=comment
+        )
+
+        return Response({
+            "message": "Rating submitted successfully",
+            "rating_id": rating.id,
+            "version_number": active_version.version_number
+        }, status=201)
+
 
 class MentorRenewalViewSet(viewsets.ModelViewSet):
     queryset = MentorRenewal.objects.all()
@@ -2257,3 +2360,41 @@ class MentorRenewalViewSet(viewsets.ModelViewSet):
             })
 
         return Response({"renewals": result}, status=200)
+    
+class FavoriteViewSet(viewsets.ModelViewSet):
+    queryset = Favorite.objects.all()
+    serializer_class = FavoriteSerializer
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=["post"], url_path="add")
+    def add_favorite(self, request):
+        user = request.user
+        lecture_id = request.data.get("lecture_id")
+        summary_id = request.data.get("summary_id")
+
+        if not lecture_id and not summary_id:
+            return Response({"error": "Either lecture_id or summary_id is required"}, status=400)
+
+        favorite, created = Favorite.objects.get_or_create(
+            user=user,
+            lecture_id=lecture_id if lecture_id else None,
+            summary_id=summary_id if summary_id else None
+        )
+
+        return Response({"message": "Added to favorites", "favorite_id": favorite.id}, status=201)
+
+    @action(detail=True, methods=["delete"], url_path="remove")
+    def remove_favorite(self, request, pk=None):
+        try:
+            favorite = Favorite.objects.get(id=pk, user=request.user)
+        except Favorite.DoesNotExist:
+            return Response({"error": "Favorite not found"}, status=404)
+
+        favorite.delete()
+        return Response({"message": "Removed from favorites"}, status=200)
+
+    @action(detail=False, methods=["get"], url_path="")
+    def list_favorites(self, request):
+        favorites = Favorite.objects.filter(user=request.user).order_by("-created_at")
+        serializer = FavoriteSerializer(favorites, many=True)
+        return Response(serializer.data, status=200)

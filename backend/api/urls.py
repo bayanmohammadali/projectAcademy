@@ -31,7 +31,8 @@ from.views import (
     GroupViewSet,
     MentorApplicationViewSet,
     SummaryViewSet,
-    MentorRenewalViewSet
+    MentorRenewalViewSet,
+    FavoriteViewSet
 
 )
 
@@ -50,7 +51,6 @@ router.register("supervisors", SupervisorViewSet, basename="supervisor")
 #http://127.0.0.1:8000/api/notifications/ رؤية كل الاشعارات تبعاايا حدا بالتطبيق حتى لو مشرف 
 router.register("notifications", NotificationViewSet, basename="notification")
 
-#http://127.0.0.1:8000/api/semesters/create/ - هون بسمح للادمن انشاء فصل دراسي جديد
 #http://127.0.0.1:8000/api/semesters/latest/ - هون بطلعلي الفصل الدراسي الحالي اللي active
 #http://127.0.0.1:8000/api/semesters/names/ - هون بطلعلي اسماء كل الفصول الدراسية
 #http://127.0.0.1:8000/api/semesters/<semester_id>/assign_supervisors/ - هون بسمح للادمن يحدد المشرفين اللي بيشرفوا على فصل دراسي معين
@@ -91,12 +91,12 @@ router.register("lectures", LectureViewSet, basename="lecture")
 #http://127.0.0.1:8000/api/enrollments/<enrollment_id>/download/archive/summary/<summary_id>/ - هون بسمح للطالب تحميل ملخص معين من الارشيف
 router.register("enrollments", EnrollmentViewSet, basename="enrollments") # هون بطلعلي كل المواد اللي الطالب مسجل عليها في الفصل الدراسي الحالي
 
-# http://127.0.0.1:8000/api/users/admin_dashboard/ هون داش بورد تبع الادمن الاحصائيات عن المستخدمين بالتطبيق
+#http://127.0.0.1:8000/api/users/admin_dashboard/ هون داش بورد تبع الادمن الاحصائيات عن المستخدمين بالتطبيق
 #http://127.0.0.1:8000/api/users/supervisor_dashboard/  هون داش بورد تبع السوبرفايزر الاحصائيات عن المواد اللي بيشرف عليها والملخصات والطلبات تبع المينتورات  
 router.register("users", UserViewSet, basename="users")
 
 #_____________________________________________________________________________
-
+#ادارة للغروبات 
 #chats:
 #http://127.0.0.1:8000/api/groups/<group_id>/messages/ - هون بطلعلي كل الرسائل اللي موجودة في المجموعات اللي الطالب مشارك فيها
 #http://127.0.0.1:8000/api/groups/<group_id>/send_message/ - هون الطالب ارسال رسالة ل مجموعة معينة
@@ -135,13 +135,21 @@ router.register("mentor_renewals", MentorRenewalViewSet, basename="mentor_renewa
 #http://127.0.0.1:8000/api/summaries/<summary_id>/new-version/ - هون بسمح للطالب اضافة نسخة جديدة من ملخص معين
 #http://127.0.0.1:8000/api/summaries/<summary_id>/versions/ - هون بطلعلي كل النسخ اللي تم اضافتها لملخص معين
 
+#student:
+#http://127.0.0.1:8000/api/summaries/<summary_id>/rate/ - هون بسمح للطالب تقييم ملخص معين
 #supervisor:
 # http://127.0.0.1:8000/api/summaries/pending/ - هون بطلعلي كل الملخصات اللي لسا ما انقبلت ولا رفضت لمادة معينة (للسوبرفايزر)
 #http://127.0.0.1:8000/api/summaries/<summary_id>/review/ - هون السوبرفايزر يقدر يوافق او يرفض ملخص معين
 router.register("summaries", SummaryViewSet, basename="summary") # هون بطلعلي كل الملخصات اللي بتتبع مادة معينة
 
-#_____
-#ChatRoom
+#______________________
+#Favorite:
+#http://127.0.0.1:8000/api/favorites/add/
+#http://127.0.0.1:8000/api/favorites/remove/
+router.register("favorites", FavoriteViewSet, basename="favorite") # هون بطلعلي ك المفضلة اللي ضفتها كطالب
+
+#____________________-
+#ChatRoom:محادثات بين الطلاب والمينتورات
 #RatingMentor
 #______
 #Survey
