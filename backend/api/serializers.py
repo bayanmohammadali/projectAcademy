@@ -8,7 +8,7 @@ from users.models import User
 from groups.models import Group, GroupMember, GroupMessage
 from users.models import Notification
 from courses.models import Course, CourseOffering, Enrollment, Lecture
-from mentors.models import MentorApplication, MentorRenewal
+from mentors.models import MentorApplication, MentorRenewal, ChatRoom, ChatMessage, MentorRating
 from summaries.models import Summary, SummaryVersion, SummaryReview, SummaryRating, Favorite
 
 User = get_user_model()
@@ -387,5 +387,23 @@ class MentorRenewalSerializer(serializers.ModelSerializer):
 class FavoriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Favorite
+        fields = "__all__"
+        read_only_fields = ["created_at"]
+
+
+class ChatRoomSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChatRoom
+        fields = "__all__"
+        read_only_fields = ["created_at"]
+
+class ChatMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChatMessage
+        fields = "__all__"
+        read_only_fields = ["created_at"]
+class MentorRatingSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MentorRating
         fields = "__all__"
         read_only_fields = ["created_at"]

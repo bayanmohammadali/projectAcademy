@@ -33,7 +33,8 @@ from.views import (
     MentorApplicationViewSet,
     SummaryViewSet,
     MentorRenewalViewSet,
-    FavoriteViewSet
+    FavoriteViewSet,
+    ChatRoomViewSet,
 
 )
 
@@ -127,7 +128,7 @@ router.register("mentor_applications", MentorApplicationViewSet, basename="mento
 #تجديد المينتورات:
 #http://127.0.0.1:8000/api/mentor_renewals/renewal_list/ - عرض كل المينتورات اللي لازم يقرر تجديدهم
 #http://127.0.0.1:8000/api/mentor_renewals/<mentor_renewals_id>/renew/ -اتخاذ القرار (تجديد / رفض) لتجديد مينتور معين
-#http://127.0.0.1:8000/api/mentor_renewals/renewed_list/ - عرض كل المينتورات اللي تم تجديدهم
+#http://127.0.0.1:8000/api/mentor_renewals/renewed_approved/ - عرض كل المينتورات اللي تم تجديدهم
 router.register("mentor_renewals", MentorRenewalViewSet, basename="mentor_renewal") # هون بطلعلي كل طلبات تجديد المينتورات اللي تحت اشراف سوبرفايزر اختصاص
 #_______________________________________
 #mentor Sumary:
@@ -146,13 +147,21 @@ router.register("summaries", SummaryViewSet, basename="summary") # هون بطل
 
 #______________________
 #Favorite:
+#http://127.0.0.1:8000/api/favorites/list_favorites/ - هون بطلعلي كل المحاضرات والملخصات اللي ضفتها كطالب للمفضلة
 #http://127.0.0.1:8000/api/favorites/add/
 #http://127.0.0.1:8000/api/favorites/remove/
 router.register("favorites", FavoriteViewSet, basename="favorite") # هون بطلعلي ك المفضلة اللي ضفتها كطالب
 
 #____________________-
 #ChatRoom:محادثات بين الطلاب والمينتورات
-#RatingMentor
+#http://127.0.0.1:8000/api/chat_rooms/ - هون بطلعلي كل غرف المحادثة بيني وبين المينتورات اللي بتتبع المواد اللي انا مسجل عليها
+#http://127.0.0.1:8000/api/chat_rooms/create_room/ - هون بسمح للطالب انشاء غرفة محادثة مع مينتور معين لمادة معينة 
+#http://127.0.0.1:8000/api/chat_rooms/<room_id>/messages/ - هون بطلعلي كل الرسائل اللي موجودة في غرفة محادثة معينة
+#http://127.0.0.1:8000/api/chat_rooms/<room_id>/send_message/ - هون بسمح للطالب ارسال رسالة ل غرفة محادثة معينة
+#http://127.0.0.1:8000/api/chat_rooms/<room_id>/student_rate/ - هون بسمح للطالب تقييم المينتور بعد كل جلسة (مسموح مرة واحدة لكل جلسة)
+#http://127.0.0.1:8000/api/chat_rooms/<room_id>/rate/ - بسمح للطالب تقييم 
+
+router.register("chat_rooms", ChatRoomViewSet, basename="chat_room") # هون بطلعلي كل غرف المحادثة بيني وبين المينتورات اللي بتتبع المواد اللي انا مسجل عليها
 #______
 #Survey
 #_____

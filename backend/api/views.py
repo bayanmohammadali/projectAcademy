@@ -46,7 +46,9 @@ from .serializers import (
     SummaryReviewSerializer,
     SummaryVersionSerializer,
     MentorRenewalSerializer,
-    FavoriteSerializer
+    FavoriteSerializer,
+    ChatRoomSerializer,
+    ChatMessageSerializer
 
 
 )
@@ -168,7 +170,8 @@ class UserViewSet(viewsets.ModelViewSet):
 
     # عدد طلبات المينتورات الخاصة باختصاص السوبرفايزر
         mentor_requests = MentorApplication.objects.filter(
-            course__major=major
+            course__major=major,
+            status = "pending"
         ).count()
 
         return Response({
@@ -876,15 +879,37 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         )
 
     # استخراج المواد
-        courses = [
-            {
-                "id": en.course_offering.course.id,
-                "name": en.course_offering.course.name,
-                "code": en.course_offering.course.code,
-                "major": en.course_offering.course.major.name
-            }
-         for en in enrollments
-        ]
+        courses = []
+
+        for en in enrollments:
+            course = en.course_offering.course
+            offering = en.course_offering
+
+            # عدد المحاضرات
+            lectures_count = offering.lectures.count()
+
+            # عدد الملخصات
+            summaries_count = Summary.objects.filter(
+                lecture__course_offering=offering
+            ).count()
+
+            # عدد المينتورات الرسميين والتجريبيين لهذا الفصل فقط
+            mentors_count = MentorApplication.objects.filter(
+                course=course,
+                status__in=["approved", "trial"]
+            ).count()
+
+            courses.append({
+                "id": course.id,
+                "enrollment_id": en.id,
+                "name": course.name,
+                "code": course.code,
+                "major": course.major.name,
+                "lectures_count": lectures_count,
+                "summaries_count": summaries_count,
+                "mentors_count": mentors_count
+            })
+
         return Response(courses)
    
     @action(detail=True, methods=["get"], url_path="lectures")
@@ -1542,15 +1567,6 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         ).exists():
             return Response({"error": "You already applied for this course"}, status=400)
 
-
-        application = MentorApplication.objects.create(
-            student=student,
-            course_id=course_id,
-            motivation_text=motivation,
-            experience_text=experience,
-            status="pending"
-        )
-
         file1 = request.FILES.get("file1")
         file2 = request.FILES.get("file2")
 
@@ -1565,7 +1581,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
                 return "File too large (max 25MB)"
 
             # نوع الملف
-            if f.content_type not in allowed_types:
+            if not f.name.lower().endswith('.pdf'):
                 return "Invalid file type"
 
             # التحقق من تلف الملف
@@ -1576,8 +1592,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
                 except:
                     return "PDF file is corrupted"
 
-            
-
+    
             return None
 
         # التحقق من file1
@@ -1593,6 +1608,14 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
             if error:
                 return Response({"error": f"file2: {error}"}, status=400)
             application.file2 = file2
+
+        application = MentorApplication.objects.create(
+            student=student,
+            course_id=course_id,
+            motivation_text=motivation,
+            experience_text=experience,
+            status="pending"
+        )
 
         application.save()
 
@@ -1927,17 +1950,40 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
         mentor = user
 
-        # التقييمات
+        # -----------------------------
+        # 1) التقييمات
+        # -----------------------------
         ratings = mentor.received_ratings.all()
         avg_rating = ratings.aggregate(Avg("rating_value"))["rating_value__avg"]
         avg_rating = round(avg_rating, 2) if avg_rating else None
         total_ratings = ratings.count()
 
-        # الشات لسا مو جاهز
-        total_chats = 0
-        response_rate = 0
+        # -----------------------------
+        # 2) عدد المحادثات
+        # -----------------------------
+        total_chats = ChatRoom.objects.filter(mentor=mentor).count()
 
-        # كل المواد سواء trial أو approved
+        # -----------------------------
+        # 3) نسبة الرد
+        # -----------------------------
+        student_msgs = ChatMessage.objects.filter(
+            chatroom__mentor=mentor,
+            sender__role="student"
+        ).count()
+
+        mentor_msgs = ChatMessage.objects.filter(
+            chatroom__mentor=mentor,
+            sender=mentor
+        ).count()
+
+        if student_msgs > 0:
+            response_rate = round((mentor_msgs / student_msgs) * 100, 2)
+        else:
+            response_rate = 0
+
+        # -----------------------------
+        # 4) المواد اللي هو مينتور فيها
+        # -----------------------------
         apps = MentorApplication.objects.filter(student=mentor)
 
         courses = [
@@ -1949,17 +1995,22 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
             for a in apps
         ]
 
-        # تحديد حالة المينتور
+        # -----------------------------
+        # 5) حالة المينتور
+        # -----------------------------
         if any(a.status == "approved" for a in apps):
-            status = "approved"
+            status_value = "approved"
         else:
-            status = "trial"
+            status_value = "trial"
 
+        # -----------------------------
+        # 6) البيانات النهائية
+        # -----------------------------
         data = {
             "id": mentor.id,
             "name": f"{mentor.first_name} {mentor.last_name}",
             "bio": mentor.bio,
-            "status": status,
+            "status": status_value,
             "avg_rating": avg_rating,
             "total_ratings": total_ratings,
             "total_chats": total_chats,
@@ -1967,11 +2018,8 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
             "courses": courses
         }
 
+
         return Response(data, status=200)
-
-
-
-
 
 class SummaryViewSet(viewsets.ModelViewSet):
     queryset = Summary.objects.all()
@@ -2265,17 +2313,43 @@ class MentorRenewalViewSet(viewsets.ModelViewSet):
         for app in approved_apps:
             mentor = app.student
 
-            # حساب التقييم
+            # -----------------------------
+            # 1) التقييمات
+            # -----------------------------
             ratings = mentor.received_ratings.all()
             avg_rating = ratings.aggregate(Avg("rating_value"))["rating_value__avg"]
             avg_rating = round(avg_rating, 2) if avg_rating else None
+            total_ratings = ratings.count()
 
-            # عدد المحادثات
+            # -----------------------------
+            # 2) عدد المحادثات
+            # -----------------------------
             total_chats = ChatRoom.objects.filter(mentor=mentor).count()
 
-            # نسبة الرد
-            replied = ChatRoom.objects.filter(mentor=mentor, messages__sender=mentor).distinct().count()
-            response_rate = (replied / total_chats * 100) if total_chats > 0 else 0
+            # -----------------------------
+            # 3) نسبة الرد (الصحيحة)
+            # -----------------------------
+            student_msgs = ChatMessage.objects.filter(
+                chatroom__mentor=mentor,
+                sender__role="student"
+            ).count()
+
+            mentor_msgs = ChatMessage.objects.filter(
+                chatroom__mentor=mentor,
+                sender=mentor
+            ).count()
+
+            if student_msgs > 0:
+                response_rate = round((mentor_msgs / student_msgs) * 100, 2)
+            else:
+                response_rate = 0
+
+            # -----------------------------
+            # 4) التحذير
+            # -----------------------------
+            warning = None
+            if avg_rating and avg_rating < 2.5:
+                warning = "Low rating, renewal not recommended"
 
             result.append({
                 "mentor_id": mentor.id,
@@ -2283,9 +2357,10 @@ class MentorRenewalViewSet(viewsets.ModelViewSet):
                 "course_id": app.course.id,
                 "course_name": app.course.name,
                 "avg_rating": avg_rating,
+                "total_ratings": total_ratings,
                 "total_chats": total_chats,
-                "response_rate": round(response_rate, 1),
-                "warning": "Low rating, renewal not recommended" if avg_rating and avg_rating < 2.5 else None
+                "response_rate": response_rate,
+                "warning": warning
             })
 
         return Response({"mentors": result}, status=200)
@@ -2350,7 +2425,7 @@ class MentorRenewalViewSet(viewsets.ModelViewSet):
             return Response({"message": "Mentor renewed successfully"}, status=200)
         
 
-    @action(detail=False, methods=["get"], url_path="renewed_list")
+    @action(detail=False, methods=["get"], url_path="renewed_approved")
     def renewed_list(self, request):
         user = request.user
 
@@ -2405,8 +2480,187 @@ class FavoriteViewSet(viewsets.ModelViewSet):
         favorite.delete()
         return Response({"message": "Removed from favorites"}, status=200)
 
-    @action(detail=False, methods=["get"], url_path="")
+    @action(detail=False, methods=["get"], url_path="list_favorites")
     def list_favorites(self, request):
         favorites = Favorite.objects.filter(user=request.user).order_by("-created_at")
-        serializer = FavoriteSerializer(favorites, many=True)
-        return Response(serializer.data, status=200)
+
+        result = []
+
+        for fav in favorites:
+            item = {
+                "favorite_id": fav.id,
+                "created_at": fav.created_at,
+            }
+
+    
+            if fav.lecture:
+                lecture = fav.lecture
+                item["type"] = "lecture"
+                item["lecture"] = {
+                    "id": lecture.id,
+                    "title": lecture.title,
+                    "file": lecture.file.url if lecture.file else None,
+                    "created_at": lecture.created_at
+                }
+
+            
+            if fav.summary:
+                summary = fav.summary
+                item["type"] = "summary"
+                item["summary"] = {
+                    "id": summary.id,
+                    "title": summary.title,
+                    "file": summary.file.url if summary.file else None,
+                    "created_at": summary.created_at
+                }
+
+            result.append(item)
+
+        return Response(result, status=200)
+
+
+class ChatRoomViewSet(viewsets.ModelViewSet):
+    queryset = ChatRoom.objects.all()
+    serializer_class = ChatRoomSerializer
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=["post"], url_path="create_room")
+    def create_room(self, request):
+        student = request.user
+        mentor_id = request.data.get("mentor_id")
+
+        try:
+            mentor = User.objects.get(id=mentor_id, role="mentor")
+        except User.DoesNotExist:
+            return Response({"error": "Mentor not found"}, status=404)
+
+        room, created = ChatRoom.objects.get_or_create(student=student, mentor=mentor)
+
+        return Response({
+            "message": "Chat room created",
+            "room_id": room.id,
+            "created": created
+        })
+
+    @action(detail=True, methods=["post"], url_path="send_message")
+    def send_message(self, request, pk=None):
+        user = request.user
+
+        try:
+            room = ChatRoom.objects.get(id=pk)
+        except ChatRoom.DoesNotExist:
+            return Response({"error": "Chatroom not found"}, status=404)
+
+        message_text = request.data.get("message")
+        if not message_text:
+            return Response({"error": "Message is required"}, status=400)
+
+        msg = ChatMessage.objects.create(
+            chatroom=room,
+            sender=user,
+            message=message_text
+        )
+
+        if user == room.mentor:
+            room.last_session_time = timezone.now()
+            room.save()
+
+        return Response({
+            "message": "Message sent",
+            "data": {
+                "id": msg.id,
+                "sender": user.id,
+                "message": msg.message,
+                "created_at": msg.created_at
+            }
+        })
+    
+    @action(detail=True, methods=["get"], url_path="messages")
+    def get_messages(self, request, pk=None):
+        try:
+            room = ChatRoom.objects.get(id=pk)
+        except ChatRoom.DoesNotExist:
+            return Response({"error": "Chatroom not found"}, status=404)
+
+        messages = room.messages.order_by("created_at")
+
+        data = [
+            {
+                "id": m.id,
+                "sender": m.sender.id,
+                "message": m.message,
+                "created_at": m.created_at
+            }
+            for m in messages
+        ]
+
+        return Response(data)
+
+
+    
+    @action(detail=True, methods=["get"], url_path="should_rate")
+    def should_rate(self, request, pk=None):
+        user = request.user
+
+        try:
+            room = ChatRoom.objects.get(id=pk, student=user)
+        except ChatRoom.DoesNotExist:
+            return Response({"error": "Chatroom not found"}, status=404)
+
+        # إذا ما في جلسة جديدة → ما في تقييم
+        if not room.last_session_time:
+            return Response({"should_rate": False})
+
+        # إذا ما قيّم ولا مرة → لازم يظهر
+        if not room.last_rating_time:
+            return Response({"should_rate": True})
+
+        # إذا آخر جلسة أحدث من آخر تقييم → لازم يظهر
+        if room.last_session_time > room.last_rating_time:
+            return Response({"should_rate": True})
+
+        # غير هيك → لا يظهر
+        return Response({"should_rate": False})
+
+
+   
+    @action(detail=True, methods=["post"], url_path="rate")
+    def rate_mentor(self, request, pk=None):
+        user = request.user
+
+        try:
+            room = ChatRoom.objects.get(id=pk, student=user)
+        except ChatRoom.DoesNotExist:
+            return Response({"error": "Chatroom not found"}, status=404)
+
+    
+        # إذا ما في جلسة جديدة → ممنوع
+        if not room.last_session_time:
+            return Response({"error": "No new session to rate"}, status=403)
+
+        # إذا في تقييم سابق
+        if room.last_rating_time:
+            # إذا آخر جلسة ليست أحدث من آخر تقييم → ممنوع
+            if room.last_session_time <= room.last_rating_time:
+                return Response({"error": "You already rated the latest session"}, status=403)
+
+        
+        rating_value = request.data.get("rating_value")
+        comment = request.data.get("comment", "")
+
+        if not rating_value:
+            return Response({"error": "rating_value is required"}, status=400)
+
+        MentorRating.objects.create(
+            student=user,
+            mentor=room.mentor,
+            chatroom=room,
+            rating_value=rating_value,
+            comment=comment
+        )
+
+        # تحديث آخر وقت تقييم
+        room.last_rating_time = timezone.now()
+        room.save()
+
+        return Response({"message": "Rating submitted successfully"})
