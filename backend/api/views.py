@@ -720,7 +720,7 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
         user = request.user
 
         #  السوبرفايزر يضيف محاضرات
-        if user.role != "supervisor" or user.role != "admin":
+        if user.role != "supervisor" and user.role != "admin":
             return Response({"error": "Only supervisors or Admin can add lectures"}, status=403)
 
         # 1) نجيب الـ offering
@@ -1001,21 +1001,22 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         course = course_offering.course
 
         # -----------------------------
-        # 2) المينتور الرسمي (renewed)
-        # -----------------------------
-        renewed_links = MentorRenewal.objects.filter(
-            course_offering=course_offering,
-            is_renewed=True
-        ).select_related("mentor")
+        # 2) المينتور الرسمي (approved)
+        #  -----------------------------
+        approved_apps = MentorApplication.objects.filter(
+            course=course,
+            status="approved"
+        ).select_related("student")
 
         official_mentors = [
             {
-                "id": m.mentor.id,
-                "name": f"{m.mentor.first_name} {m.mentor.last_name}",
-                "email": m.mentor.email
+                "id": app.student.id,
+                "name": f"{app.student.first_name} {app.student.last_name}",
+                "email": app.student.email,
+                "status": "approved"
             }
-            for m in renewed_links
-        ]
+            for app in approved_apps
+]
 
         # -----------------------------
         # 3) المينتور التجريبي (trial)
@@ -1648,7 +1649,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     def pending(self, request):
         user = request.user
 
-        if user.role != "supervisor" or user.role != "admin":
+        if user.role != "supervisor" and user.role != "admin":
             return Response({"error": "Only supervisors or admin can view pending applications"}, status=403)
 
         applications = MentorApplication.objects.filter(
@@ -1674,7 +1675,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         user = request.user
 
         # فقط السوبرفايزر يشوف التفاصيل
-        if user.role != "supervisor" or user.role != "admin":
+        if user.role != "supervisor" and user.role != "admin":
             return Response({"error": "Only supervisors and admin can view application details"}, status=403)
 
         try:
@@ -1715,7 +1716,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     def review(self, request, pk=None):
         user = request.user
 
-        if user.role != "supervisor" or user.role != "admin":
+        if user.role != "supervisor" and user.role != "admin":
             return Response({"error": "Only supervisors and admin can review applications"}, status=403)
 
         try:
@@ -1770,7 +1771,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         user = request.user
 
         # فقط السوبرفايزر أو المشرف
-        if user.role != "supervisor" or user.role != "admin":
+        if user.role != "supervisor" and user.role != "admin":
             return Response({"error": "Only supervisors and admin can finalize applications"}, status=403)
 
         # جلب الطلب
@@ -1877,7 +1878,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     # 10) كل المينتورات الموافق عليهم عند  السوبرفايزر
     @action(detail=False, methods=["get"], url_path="approved_by_mentor")
     def approved_by_mentor(self, request):
-        if request.user.role != "supervisor" or request.user.role != "admin":
+        if request.user.role != "supervisor" and request.user.role != "admin":
             return Response({"error": "Only supervisors can access this endpoint"}, status=403)
 
         apps = MentorApplication.objects.filter(
@@ -1917,7 +1918,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     #12) 
     @action(detail=False, methods=["get"], url_path="trial_by_supervisor")
     def trial_by_supervisor(self, request):
-        if request.user.role != "supervisor" or request.user.role != "admin":
+        if request.user.role != "supervisor" and request.user.role != "admin":
             return Response({"error": "Only supervisors or admin can access this endpoint"}, status=403)
 
         apps = MentorApplication.objects.filter(
@@ -1928,6 +1929,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         data = [
             {
                 "id": app.student.id,
+                "application_id": app.id,  # ← أضيفي هاد
                 "name": f"{app.student.first_name} {app.student.last_name}",
                 "email": app.student.email,
                 "course": app.course.name if app.course else None,
@@ -2015,7 +2017,8 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
             "total_ratings": total_ratings,
             "total_chats": total_chats,
             "response_rate": response_rate,
-            "courses": courses
+            "courses": courses,
+            "trial_end_date": app.trial_end_date.isoformat() if app.trial_end_date else None,
         }
 
 

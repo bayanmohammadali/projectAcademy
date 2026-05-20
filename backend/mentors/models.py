@@ -88,7 +88,7 @@ class ChatRoom(models.Model):
         related_name="mentor_rooms"
     )
     last_session_time = models.DateTimeField(null=True, blank=True)
-    last_rating_time = models.IntegerField(null=True, blank=True)
+    last_rating_time = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
