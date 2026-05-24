@@ -1446,22 +1446,32 @@ class GroupViewSet(viewsets.ModelViewSet):
 
         return Response(serializer.data)
     
-    @action (detail=True, methods=["get"], url_path="messages")
+    @action(detail=True, methods=["get"], url_path="messages")
     def group_messages(self, request, pk=None):
-        group = self.get_object()
-        messages = group.messages.all().order_by("created_at")
+     group = self.get_object()
+     messages = group.messages.all().order_by("created_at")
 
-        data = [
-            {
-                "id": m.id,
-                "sender": f"{m.sender.first_name} {m.sender.last_name}",
-                "sender_id": m.sender.id,
-                "message": m.message,
-                "created_at": m.created_at
-            }
-            for m in messages
-        ]
-        return Response(data)
+     data = []
+     for m in messages:
+        is_mentor = MentorApplication.objects.filter(
+            student=m.sender,
+            status__in=["trial", "approved"]
+        ).exists() or m.sender.role == "mentor"
+
+        sender_name = f"{m.sender.first_name} {m.sender.last_name}"
+        if is_mentor:
+            sender_name = f"Mentor {sender_name}"
+
+        data.append({
+            "id": m.id,
+            "sender": sender_name,
+            "sender_id": m.sender.id,
+            "message": m.message,
+            "created_at": m.created_at,
+            "is_mentor": is_mentor,
+        })
+
+     return Response(data)
     
     @action(detail=True, methods=["post"], url_path="send_message")
     def send_message(self, request, pk=None):
@@ -1764,7 +1774,18 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
             "trial_end_date": app.trial_end_date,
             "review_note": app.review_note
         }, status=200)
-
+    @action(detail=True, methods=["post"], url_path="release")
+    def release(self, request, pk=None):
+        try:
+           app = MentorApplication.objects.get(id=pk)
+        except MentorApplication.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+    
+        if app.processing_by_id == request.user.id:
+            app.is_processing = False
+            app.processing_by = None
+            app.save()
+        return Response({"message": "Released"}, status=200)
     # 7) الموافقة بشكل نهائي 
     @action(detail=True, methods=["post"], url_path="finalize")
     def finalize(self, request, pk=None):
@@ -1939,6 +1960,35 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         ]
 
         return Response({"trial_mentors": data})
+    @action(detail=True, methods=["get"], url_path="trial_details")
+    def trial_details(self, request, pk=None):
+        user = request.user    
+
+        try:
+            app = MentorApplication.objects.get(id=pk)
+        except MentorApplication.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+    
+    # ✅ القفل
+        if app.is_processing and app.processing_by_id != user.id:
+            return Response({
+            "error": "This mentor is being reviewed by another supervisor"
+            }, status=403)
+    
+        app.is_processing = True
+        app.processing_by_id = user.id
+        app.save()
+    
+        return Response({
+            "application_id": app.id,
+            "name": f"{app.student.first_name} {app.student.last_name}",
+            "email": app.student.email,
+            "course": app.course.name if app.course else None,
+            "trial_end_date": app.trial_end_date,
+            "motivation_text": app.motivation_text,
+            "experience_text": app.experience_text,
+            "rating": None,
+       })
 
     @action(detail=False, methods=["get"], url_path="profile")
     def mentor_profile(self, request):
@@ -2023,12 +2073,38 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
 
         return Response(data, status=200)
+    @action(detail=False, methods=["get"], url_path="my_lectures")
+    def my_lectures(self, request):
+        user = request.user
 
+        apps = MentorApplication.objects.filter(
+           student=user,
+           status__in=["trial", "approved"]
+        ).select_related("course")
+
+        all_lectures = []
+        for app in apps:
+            from courses.models import CourseOffering
+            offering = CourseOffering.objects.filter(
+                course=app.course,
+                is_active=True
+            ).first()
+
+            if offering:
+               for lec in offering.lectures.all():
+                   all_lectures.append({
+                       "id": lec.id,
+                       "title": lec.title,
+                       "course_name": app.course.name,
+                       "course_id": app.course.id,
+                   })
+        return Response({"lectures": all_lectures})  
+   
 class SummaryViewSet(viewsets.ModelViewSet):
     queryset = Summary.objects.all()
     serializer_class=SummarySerializer
     permission_classes = [IsAuthenticated]
-
+   
     @action(detail=False, methods=["get"], url_path="search")
     def search_summaries(self, request):
         query = request.query_params.get("q", "").strip()
@@ -2100,7 +2176,7 @@ class SummaryViewSet(viewsets.ModelViewSet):
 
         return Response({"message": "Summary submitted successfully"}, status=201)
 
-
+    
     @action(detail=False, methods=["get"], url_path="my-summaries")
     def my_summaries(self, request):
         user = request.user
@@ -2146,16 +2222,26 @@ class SummaryViewSet(viewsets.ModelViewSet):
         user = request.user
 
         # السوبرفايزر فقط
-        offerings = CourseOffering.objects.filter(supervisor=user)
-        lectures = Lecture.objects.filter(course_offering__in=offerings)
-
+        # ✅ فلترة حسب major بدل supervisor
         summaries = Summary.objects.filter(
-            lecture__in=lectures,
+            lecture__course_offering__course__major=user.major,
             status="pending"
         ).order_by("-created_at")
 
-        serializer = SummarySerializer(summaries, many=True)
-        return Response(serializer.data, status=200)
+        data = [
+        {
+            "id": s.id,
+            "title": s.title,
+            "status": s.status,
+            "created_at": s.created_at,
+            "file": s.file.url if s.file else None,
+            "mentor_name": f"{s.student.first_name} {s.student.last_name}",
+            "lecture_title": s.lecture.title if s.lecture else None,
+            "course_name": s.lecture.course_offering.course.name if s.lecture else None,
+        }
+        for s in summaries
+       ]
+        return Response(data, status=200)
 
 
     @action(detail=True, methods=["post"], url_path="review")
@@ -2667,3 +2753,21 @@ class ChatRoomViewSet(viewsets.ModelViewSet):
         room.save()
 
         return Response({"message": "Rating submitted successfully"})
+    @action(detail=False, methods=["get"], url_path="my_chats")
+    def my_chats(self, request):
+        user = request.user
+        
+        rooms = ChatRoom.objects.filter(mentor=user).select_related("student")
+        
+        data = []
+        for room in rooms:
+            last_msg = room.messages.order_by("-created_at").first()
+            data.append({
+                "room_id": room.id,
+                "student_id": room.student.id,
+                "student_name": f"{room.student.first_name} {room.student.last_name}",
+                "last_message": last_msg.message if last_msg else None,
+                "last_message_time": last_msg.created_at if last_msg else None,
+            })
+        
+        return Response({"chats": data})
