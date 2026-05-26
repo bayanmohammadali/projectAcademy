@@ -4,7 +4,7 @@ from django.contrib.auth.password_validation import validate_password
 
 from academic.models import University,AcademicYear, Semester
 from majors.models import Major
-from users.models import User
+from users.models import User, Survey,SurveyAnswer,SurveyQuestion
 from groups.models import Group, GroupMember, GroupMessage
 from users.models import Notification
 from courses.models import Course, CourseOffering, Enrollment, Lecture
@@ -402,8 +402,33 @@ class ChatMessageSerializer(serializers.ModelSerializer):
         model = ChatMessage
         fields = "__all__"
         read_only_fields = ["created_at"]
+        
 class MentorRatingSerializer(serializers.ModelSerializer):
     class Meta:
         model = MentorRating
         fields = "__all__"
         read_only_fields = ["created_at"]
+
+
+from rest_framework import serializers
+from users.models import Survey, SurveyQuestion, SurveyAnswer
+
+
+class SurveyQuestionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SurveyQuestion
+        fields = ["id", "text", "question_type", "choices"]
+
+
+class SurveySerializer(serializers.ModelSerializer):
+    questions = SurveyQuestionSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Survey
+        fields = ["id", "title", "description", "is_active", "questions"]
+
+
+class SurveyAnswerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SurveyAnswer
+        fields = ["id", "question", "answer"]

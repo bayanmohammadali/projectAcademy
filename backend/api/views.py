@@ -1,6 +1,6 @@
 
 from rest_framework.decorators import APIView, action
-from rest_framework import generics, request
+from rest_framework import generics, request, settings
 from rest_framework.permissions import AllowAny
 from django.db.models import Q, Count, Avg
 from rest_framework.decorators import action 
@@ -15,6 +15,7 @@ from datetime import timedelta
 from django.utils import timezone
 from .utils import send_notification
 from PyPDF2 import PdfReader
+from openai import OpenAI
 
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
@@ -48,13 +49,16 @@ from .serializers import (
     MentorRenewalSerializer,
     FavoriteSerializer,
     ChatRoomSerializer,
-    ChatMessageSerializer
+    ChatMessageSerializer,
+    SurveyQuestionSerializer,
+    SurveyAnswerSerializer,
+    SurveySerializer
 
 
 )
 from academic.models import AcademicYear, Semester, University
 from majors.models import Major
-from users.models import Notification, User
+from users.models import Notification, User, FCMToken, Survey, SurveyQuestion, SurveyAnswer
 from groups.models import Group, GroupMessage, GroupFile, GroupMember
 from courses.models import Course, CourseOffering, Enrollment, Lecture
 from majors.models import Major
@@ -327,6 +331,54 @@ class SupervisorViewSet(viewsets.ModelViewSet):
         supervisors = User.objects.filter(role="supervisor")
         serializer = SupervisorSerializer(supervisors, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["post"], url_path="change_password")
+    def change_password(self, request):
+        user = request.user
+        if user.role != "supervisor":
+            return Response({"error": "Not authorized"}, status=403)
+
+        old_password = request.data.get("old_password")
+        new_password = request.data.get("new_password")
+
+        if not user.check_password(old_password):
+            return Response({"error": "Old password is incorrect"}, status=400)
+
+        user.set_password(new_password)
+        user.save()
+        return Response({"message": "Password changed successfully"})
+
+    @action(detail=False, methods=["get"], url_path="my_profile")
+    def my_profile(self, request):
+        user = request.user
+        
+        # ✅ إذا ما في bio، نجيب الاسم من الايميل
+        display_name = user.bio if user.bio else user.email.split('@')[0]
+        
+        return Response({
+            "id": user.id,
+            "email": user.email,
+            "major": user.major.name if user.major else None,
+            "display_name": display_name,
+        })
+    
+    @action(detail=False, methods=["post"], url_path="update_name")
+    def update_name(self, request):
+        user = request.user
+        if user.role != "supervisor":
+            return Response({"error": "Not authorized"}, status=403)
+
+        display_name = request.data.get("display_name", "").strip()
+        if not display_name:
+            return Response({"error": "Name is required"}, status=400)
+
+        user.bio = display_name
+        user.save()
+        return Response({
+            "message": "Name updated successfully",
+            "display_name": display_name
+        })
+    
 
 class SemesterViewSet(viewsets.ModelViewSet):
     queryset = Semester.objects.all()
@@ -606,6 +658,16 @@ class NotificationViewSet(viewsets.ModelViewSet):
         notification.is_read = True
         notification.save()
         return Response({"message": "Notification marked as read"}, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'])
+    def mark_all_as_read(self, request):
+        self.get_queryset().update(is_read=True)
+        return Response({"message": "All notifications marked as read"})
+
+    @action(detail=False, methods=['get'])
+    def unread_count(self, request):
+        count = self.get_queryset().filter(is_read=False).count()
+        return Response({"unread_count": count})
 
 
 class CourseOfferingViewSet(viewsets.ModelViewSet):
@@ -2771,3 +2833,133 @@ class ChatRoomViewSet(viewsets.ModelViewSet):
             })
         
         return Response({"chats": data})
+    
+    @action(detail=True, methods=["post"], url_path="analyze_session")
+    def analyze_session(self, request, pk=None):
+        try:
+            room = ChatRoom.objects.get(id=pk)
+        except ChatRoom.DoesNotExist:
+            return Response({"error": "Chatroom not found"}, status=404)
+
+        messages = request.data.get("messages", [])
+
+        if not messages:
+            return Response({"error": "Messages are required"}, status=400)
+
+        conversation = "\n".join([
+            f"{m['sender']}: {m['text']}"
+            for m in messages
+        ])
+
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""
+        Determine if this conversation is a real educational session.
+        Answer ONLY: true or false.
+
+        Conversation:
+        {conversation}
+        """
+                }
+            ],
+            max_tokens=5
+        )
+        result = response.choices[0].message["content"].strip().lower()
+        is_real = "true" in result
+
+
+        room.is_real_session = is_real
+        room.save()
+
+        return Response({"is_real_session": is_real})
+
+
+class FCMTokenView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        token = request.data.get("token")
+        if not token:
+            return Response({"error": "Token is required"}, status=400)
+
+        FCMToken.objects.get_or_create(user=request.user, token=token)
+        return Response({"message": "Token saved successfully"})
+    
+
+class SurveyViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Survey.objects.filter(is_active=True)
+    serializer_class = SurveySerializer
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=True, methods=["get"])
+    def questions(self, request, pk=None):
+        survey = self.get_object()
+        serializer = SurveySerializer(survey)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"])
+    def submit(self, request, pk=None):
+        survey = self.get_object()
+        user = request.user
+        answers = request.data.get("answers", [])
+
+        for ans in answers:
+            question_id = ans.get("question")
+            answer_text = ans.get("answer")
+
+            question = SurveyQuestion.objects.get(id=question_id)
+
+            SurveyAnswer.objects.update_or_create(
+                user=user,
+                question=question,
+                defaults={"answer": answer_text}
+            )
+
+        return Response({"message": "Survey submitted successfully"})
+    
+    @action(detail=True, methods=["get"])
+    def check(self, request, pk=None):
+        survey = self.get_object()
+        user = request.user
+
+        # هل المستخدم جاوب على أي سؤال داخل هذا الاستبيان؟
+        answered = SurveyAnswer.objects.filter(
+            user=user,
+            question__survey=survey
+        ).exists()
+
+        return Response({"answered": answered})
+    
+    @action(detail=True, methods=["post"])
+    def submit(self, request, pk=None):
+        survey = self.get_object()
+        user = request.user
+
+        # منع إعادة الإجابة
+        if SurveyAnswer.objects.filter(user=user, question__survey=survey).exists():
+            return Response(
+                {"error": "You have already submitted this survey."},
+                status=400
+            )
+
+        answers = request.data.get("answers", [])
+
+        for ans in answers:
+            question_id = ans.get("question")
+            answer_text = ans.get("answer")
+
+            question = SurveyQuestion.objects.get(id=question_id)
+
+            SurveyAnswer.objects.create(
+                user=user,
+                question=question,
+                answer=answer_text
+            )
+
+        return Response({"message": "Survey submitted successfully"})
+

@@ -1,5 +1,5 @@
 from django.urls import path
-from .views import  RegisterView
+from .views import  FCMTokenView, RegisterView
 from .views import CourseOfferingViewSet, EnrollmentViewSet
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from .views import StudentSemesterView
@@ -10,6 +10,10 @@ urlpatterns = [
     path("register/", RegisterView.as_view(), name="register"),
     path("login/", TokenObtainPairView.as_view(), name="login"),
     path("refresh/", TokenRefreshView.as_view(), name="token_refresh"),
+
+    path("fcm-token/", FCMTokenView.as_view()),
+
+
 
     # هون بينعرض للطلاب الفصول الدراسية
     path("student/semesters/", StudentSemesterView.as_view()),
@@ -35,6 +39,7 @@ from.views import (
     MentorRenewalViewSet,
     FavoriteViewSet,
     ChatRoomViewSet,
+    SurveyViewSet
 
 )
 
@@ -158,12 +163,18 @@ router.register("favorites", FavoriteViewSet, basename="favorite") # هون بط
 #http://127.0.0.1:8000/api/chat_rooms/create_room/ - هون بسمح للطالب انشاء غرفة محادثة مع مينتور معين لمادة معينة 
 #http://127.0.0.1:8000/api/chat_rooms/<room_id>/messages/ - هون بطلعلي كل الرسائل اللي موجودة في غرفة محادثة معينة
 #http://127.0.0.1:8000/api/chat_rooms/<room_id>/send_message/ - هون بسمح للطالب ارسال رسالة ل غرفة محادثة معينة
-#http://127.0.0.1:8000/api/chat_rooms/<room_id>/student_rate/ - هون بسمح للطالب تقييم المينتور بعد كل جلسة (مسموح مرة واحدة لكل جلسة)
+#http://127.0.0.1:8000/api/chat_rooms/<room_id>/should_rate/ - هون بطلعلي اذا كان مسموح للطالب تقييم جلسة معينة مع مينتور معين بعد انتهاء الجلسة (مسموح مرة واحدة لكل جلسة)
 #http://127.0.0.1:8000/api/chat_rooms/<room_id>/rate/ - بسمح للطالب تقييم 
+#http://127.0.0.1:8000/api/chat_rooms/<room_id>/analyze_session/ - هون بسمح للطالب يطلب تحليل جلسة معينة من خلال الذكاء الاصطناعي (مسموح مرة واحدة لكل جلسة)
 
 router.register("chat_rooms", ChatRoomViewSet, basename="chat_room") # هون بطلعلي كل غرف المحادثة بيني وبين المينتورات اللي بتتبع المواد اللي انا مسجل عليها
 #______
 #Survey
+#http://127.0.0.1:8000/api/surveys/<survery_id>/questions/ - هون بطلعلي كل الاسئلة اللي موجودة في استبيان معين
+#http://127.0.0.1:8000/api/surveys/<survery_id>/submit/ - هون بسمح للطالب يشارك في استبيان معين من خلال الاجابة على الاسئلة الموجودة فيه
+#http://127.0.0.1:8000/api/surveys/<survery_id>/results/ - هون بطلعلي نتائج استبيان معين (للسوبرفايزر)
+#http://127.0.0.1:8000/api/surveys/<survery_id>/check/ - هون بسمح للطالب يشوف اذا كان شارك في استبيان معين او لا
+router.register("surveys", SurveyViewSet, basename="survey")
 #_____
 #Forget the password
 urlpatterns += router.urls

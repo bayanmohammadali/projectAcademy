@@ -92,6 +92,11 @@ class Notification(models.Model):
         return f"Notification for {self.user.email}: {self.type}"
     
 
+class FCMToken(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="fcm_tokens")
+    token = models.CharField(max_length=500, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
 
 class Survey(models.Model):
     academic_year = models.ForeignKey(
