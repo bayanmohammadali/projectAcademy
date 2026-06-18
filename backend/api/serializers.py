@@ -220,10 +220,18 @@ class GroupMessageSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at"]
         
 class EnrollmentSerializer(serializers.ModelSerializer):
+    student_name = serializers.SerializerMethodField()
+    course_name = serializers.SerializerMethodField()
+    semester_name = serializers.SerializerMethodField()
     class Meta:
         model = Enrollment
-        fields = ["id", "course_offering"]
-
+        fields = ["id","student","student_name","course_offering","course_name","semester_name",]
+    def get_student_name(self, obj):
+        return f"{obj.student.first_name} {obj.student.last_name}".strip()
+    def get_course_name(self, obj):
+        return obj.course_offering.course.name
+    def get_semester_name(self, obj):
+        return obj.course_offering.semester.name
     def create(self, validated_data):
         user = self.context["user"]
 
@@ -302,6 +310,7 @@ class SummarySerializer(serializers.ModelSerializer):
     active_version = serializers.SerializerMethodField()
     reviews = serializers.SerializerMethodField()
     ratings = serializers.SerializerMethodField()
+    student_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Summary
@@ -312,11 +321,14 @@ class SummarySerializer(serializers.ModelSerializer):
             "lecture_title",
             "file",
             "created_at",
+            "student",
+            "student_name",
             "active_version",
             "reviews",
             "ratings",
         ]
-
+    def get_student_name(self, obj):  # ✅ أضيفي
+        return f"{obj.student.first_name} {obj.student.last_name}".strip()
     def get_active_version(self, obj):
         version = obj.versions.filter(is_active=True).first()
         if version:

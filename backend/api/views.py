@@ -1,6 +1,7 @@
 
 from rest_framework.decorators import APIView, action
-from rest_framework import generics, request, settings
+from rest_framework import generics, request
+from django.conf import settings
 from rest_framework.permissions import AllowAny
 from django.db.models import Q, Count, Avg
 from rest_framework.decorators import action 
@@ -650,6 +651,8 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        if user.role == 'admin':
+            return Notification.objects.filter(user=user).order_by("-created_at")
         return Notification.objects.filter(user=user).order_by("-created_at")
     
     @action(detail=True, methods=['post'])
@@ -672,7 +675,10 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
 class CourseOfferingViewSet(viewsets.ModelViewSet):
     serializer_class = CourseOfferingSerializer
-    permission_classes = [IsAuthenticated, (IsSupervisor | IsAdmin )]
+    def get_permissions(self):
+        if self.action in ['list', 'retrieve']:
+          return [IsAuthenticated()]
+        return [IsAuthenticated(), (IsSupervisor | IsAdmin)()]
 
     def get_queryset(self):
         semester = Semester.objects.filter(is_active=True).first()
@@ -893,6 +899,10 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        if user.role == 'admin':
+            return Enrollment.objects.all().select_related(
+                'student', 'course_offering__course'
+                )
         return Enrollment.objects.filter(student=user)   
     
     @action(detail=False, methods=["post"], url_path="register")
@@ -1668,19 +1678,19 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
     
             return None
 
-        # التحقق من file1
+           # التحقق من file1
         if file1:
             error = validate_file(file1)
             if error:
                 return Response({"error": f"file1: {error}"}, status=400)
-            application.file1 = file1
+            
 
         # التحقق من file2
         if file2:
             error = validate_file(file2)
             if error:
                 return Response({"error": f"file2: {error}"}, status=400)
-            application.file2 = file2
+            
 
         application = MentorApplication.objects.create(
             student=student,
@@ -1689,6 +1699,11 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
             experience_text=experience,
             status="pending"
         )
+     # ✅ بعدين حطي الملفات
+        if file1:
+            application.file1 = file1
+        if file2:
+            application.file2 = file2
 
         application.save()
 
@@ -1809,8 +1824,8 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
         if decision == "trial":
             app.status = "trial"
-            app.trial_end_date = timezone.now() + timedelta(days=15)
-
+            app.trial_end_date = timezone.now() + timedelta(days=15)  #app.trial_end_date = timezone.now() + timedelta(minutes=2)
+            
             send_notification(
             app.student,
             "Trial Period Started",
@@ -2022,6 +2037,43 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         ]
 
         return Response({"trial_mentors": data})
+   
+    @action(detail=False, methods=["get"], url_path="pending_decisions")
+    def pending_decisions(self, request):
+            if request.user.role not in ["supervisor", "admin"]:
+                return Response({"error": "Forbidden"}, status=403)
+
+            apps = MentorApplication.objects.filter(
+                status="trial",
+                trial_end_date__lt=timezone.now(),
+                course__major_id=request.user.major_id
+            )
+            for app in apps:
+                already_notified = Notification.objects.filter(
+                    user=request.user,
+                    type="trial_ended",
+                    message__contains=app.student.first_name
+                ).exists()
+
+                if not already_notified:
+                    Notification.objects.create(
+                        user=request.user,
+                        type="trial_ended",
+                        message=f"Trial period ended for {app.student.first_name} {app.student.last_name} — please make a decision.",
+                        
+                    )
+            data = [
+                {
+                    "application_id": app.id,
+                    "mentor_name": f"{app.student.first_name} {app.student.last_name}",
+                    "course": app.course.name if app.course else "",
+                    "trial_end_date": app.trial_end_date,
+                }
+                for app in apps
+            ]
+
+            return Response({"pending": data})
+
     @action(detail=True, methods=["get"], url_path="trial_details")
     def trial_details(self, request, pk=None):
         user = request.user    
@@ -2287,7 +2339,7 @@ class SummaryViewSet(viewsets.ModelViewSet):
         # ✅ فلترة حسب major بدل supervisor
         summaries = Summary.objects.filter(
             lecture__course_offering__course__major=user.major,
-            status="pending"
+            
         ).order_by("-created_at")
 
         data = [
@@ -2316,7 +2368,7 @@ class SummaryViewSet(viewsets.ModelViewSet):
             return Response({"error": "Summary not found"}, status=404)
 
         # تأكد إنو السوبرفايزر هو المسؤول عن المادة
-        if summary.lecture.course_offering.supervisor != supervisor:
+        if summary.lecture.course_offering.course.major != supervisor.major:
             return Response({"error": "Not authorized"}, status=403)
 
         status_value = request.data.get("status")  # approved / rejected
@@ -2733,8 +2785,8 @@ class ChatRoomViewSet(viewsets.ModelViewSet):
         except ChatRoom.DoesNotExist:
             return Response({"error": "Chatroom not found"}, status=404)
 
+        room.messages.filter(is_read=False).exclude(sender=request.user).update(is_read=True)
         messages = room.messages.order_by("created_at")
-
         data = [
             {
                 "id": m.id,
@@ -2813,25 +2865,40 @@ class ChatRoomViewSet(viewsets.ModelViewSet):
         # تحديث آخر وقت تقييم
         room.last_rating_time = timezone.now()
         room.save()
-
         return Response({"message": "Rating submitted successfully"})
+         
     @action(detail=False, methods=["get"], url_path="my_chats")
     def my_chats(self, request):
         user = request.user
-        
-        rooms = ChatRoom.objects.filter(mentor=user).select_related("student")
-        
         data = []
-        for room in rooms:
-            last_msg = room.messages.order_by("-created_at").first()
-            data.append({
-                "room_id": room.id,
-                "student_id": room.student.id,
-                "student_name": f"{room.student.first_name} {room.student.last_name}",
-                "last_message": last_msg.message if last_msg else None,
-                "last_message_time": last_msg.created_at if last_msg else None,
-            })
-        
+
+        if user.role == "mentor":
+            rooms = ChatRoom.objects.filter(mentor=user).select_related("student")
+            for room in rooms:
+                last_msg = room.messages.order_by("-created_at").first()
+                data.append({
+                    "room_id": room.id,
+                    "other_id": room.student.id,
+                    "other_name": f"{room.student.first_name} {room.student.last_name}",
+                    "student_id": room.student.id,
+                    "student_name": f"{room.student.first_name} {room.student.last_name}",
+                    "last_message": last_msg.message if last_msg else None,
+                    "last_message_time": last_msg.created_at if last_msg else None,
+                    "unread_count": room.messages.filter(is_read=False).exclude(sender=user).count(),
+                })
+        else:
+            rooms = ChatRoom.objects.filter(student=user).select_related("mentor")
+            for room in rooms:
+                last_msg = room.messages.order_by("-created_at").first()
+                data.append({
+                    "room_id": room.id,
+                    "other_id": room.mentor.id,
+                    "other_name": f"{room.mentor.first_name} {room.mentor.last_name}",
+                    "last_message": last_msg.message if last_msg else None,
+                    "last_message_time": last_msg.created_at if last_msg else None,
+                    "unread_count": room.messages.filter(is_read=False).exclude(sender=user).count(),
+                })
+
         return Response({"chats": data})
     
     @action(detail=True, methods=["post"], url_path="analyze_session")
@@ -2869,7 +2936,7 @@ class ChatRoomViewSet(viewsets.ModelViewSet):
             ],
             max_tokens=5
         )
-        result = response.choices[0].message["content"].strip().lower()
+        result = response.choices[0].message.content.strip().lower()
         is_real = "true" in result
 
 
