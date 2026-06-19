@@ -81,8 +81,9 @@ class Notification(models.Model):
         related_name="notifications"
     )
 
-    type = models.CharField(max_length=255) 
+    type = models.CharField(max_length=255)
     message = models.TextField()
+    related_id = models.IntegerField(null=True, blank=True)
 
     is_read = models.BooleanField(default=False)
 

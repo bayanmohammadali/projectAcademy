@@ -333,6 +333,26 @@ class SupervisorViewSet(viewsets.ModelViewSet):
         serializer = SupervisorSerializer(supervisors, many=True)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'])
+    def check_primary(self, request):
+        primary = User.objects.filter(role="supervisor", is_primary_supervisor=True).first()
+        if primary:
+            return Response({
+                "has_primary": True,
+                "primary": {"id": primary.id, "name": f"{primary.first_name} {primary.last_name}"}
+            })
+        return Response({"has_primary": False, "primary": None})
+
+    @action(detail=True, methods=['post'])
+    def set_primary(self, request, pk=None):
+        if request.user.role != "admin":
+            return Response({"error": "Only admin can set primary supervisor"}, status=403)
+        User.objects.filter(role="supervisor", is_primary_supervisor=True).update(is_primary_supervisor=False)
+        supervisor = self.get_object()
+        supervisor.is_primary_supervisor = True
+        supervisor.save()
+        return Response({"message": f"{supervisor.first_name} {supervisor.last_name} set as primary supervisor"})
+
     @action(detail=False, methods=["post"], url_path="change_password")
     def change_password(self, request):
         user = request.user
@@ -983,7 +1003,43 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             })
 
         return Response(courses)
-   
+
+    @action(detail=False, methods=["get"], url_path="by_course/(?P<course_id>[^/.]+)")
+    def by_course(self, request, course_id=None):
+        enrollment = Enrollment.objects.filter(
+            student=request.user,
+            course_offering__course_id=course_id
+        ).order_by('-created_at').first()
+        if not enrollment:
+            return Response({"error": "Enrollment not found"}, status=404)
+        course = enrollment.course_offering.course
+        return Response({
+            "enrollment_id": enrollment.id,
+            "course_id": course.id,
+            "course_name": course.name,
+        })
+
+    @action(detail=False, methods=["get"], url_path="past_semesters")
+    def past_semesters(self, request):
+        user = request.user
+        semester_ids = Enrollment.objects.filter(
+            student=user,
+            course_offering__semester__is_active=False
+        ).values_list('course_offering__semester_id', flat=True).distinct()
+
+        semesters = Semester.objects.filter(
+            id__in=semester_ids
+        ).select_related('academic_year').order_by('-start_date')
+
+        return Response([
+            {
+                "semester_id": s.id,
+                "semester_name": s.name,
+                "academic_year": s.academic_year.name if s.academic_year else "",
+            }
+            for s in semesters
+        ])
+
     @action(detail=True, methods=["get"], url_path="lectures")
     def lectures_by_enrollment(self, request, pk=None):
         user = request.user
@@ -1335,17 +1391,17 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
         for offering in previous_offerings:
             lectures = Lecture.objects.filter(course_offering=offering)
-            summaries = Summary.objects.filter(lecture__course_offering=offering)
+            summaries = Summary.objects.filter(lecture__course_offering=offering, status="approved")
 
             archive_data.append({
                 "course_offering_id": offering.id,
                 "semester": offering.semester.name,
                 "lectures": [
-                    {"id": lec.id, "title": lec.title}
+                    {"id": lec.id, "title": lec.title, "file": lec.file.url if lec.file else None}
                     for lec in lectures
                 ],
                 "summaries": [
-                    {"id": s.id, "title": s.title}
+                    {"id": s.id, "title": s.title, "file": s.file.url if s.file else None}
                     for s in summaries
                 ]
             })
@@ -2038,6 +2094,31 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
         return Response({"trial_mentors": data})
    
+    @action(detail=False, methods=["get"], url_path="mentor_profile/(?P<mentor_id>[^/.]+)")
+    def mentor_public_profile(self, request, mentor_id=None):
+        from users.models import User as UserModel
+        try:
+            mentor = UserModel.objects.select_related("major").get(id=mentor_id)
+        except UserModel.DoesNotExist:
+            return Response({"error": "Mentor not found"}, status=404)
+
+        apps = MentorApplication.objects.filter(
+            student=mentor,
+            status__in=["approved", "trial"]
+        ).select_related("course")
+
+        courses = [{"name": app.course.name, "status": app.status} for app in apps]
+
+        return Response({
+            "id": mentor.id,
+            "name": f"{mentor.first_name} {mentor.last_name}",
+            "email": mentor.email,
+            "bio": mentor.bio or "",
+            "major": mentor.major.name if mentor.major else "",
+            "image": mentor.image,
+            "courses": courses,
+        })
+
     @action(detail=False, methods=["get"], url_path="pending_decisions")
     def pending_decisions(self, request):
             if request.user.role not in ["supervisor", "admin"]:
