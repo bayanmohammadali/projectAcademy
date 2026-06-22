@@ -64,7 +64,7 @@ from groups.models import Group, GroupMessage, GroupFile, GroupMember
 from courses.models import Course, CourseOffering, Enrollment, Lecture
 from majors.models import Major
 from summaries.models import Summary
-from mentors.models import MentorApplication, MentorRenewal, ChatRoom, ChatMessage, MentorRating
+from mentors.models import MentorApplication, MentorRenewal, ChatRoom, ChatMessage, MentorRating, CourseMentorRecommendation
 from summaries.models import Summary, SummaryVersion, SummaryReview, SummaryRating, Favorite
 
 User = get_user_model()
@@ -2126,14 +2126,14 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
 
             apps = MentorApplication.objects.filter(
                 status="trial",
-                trial_end_date__lt=timezone.now(),
+                trial_end_date__date__lte=timezone.now().date(),
                 course__major_id=request.user.major_id
             )
             for app in apps:
                 already_notified = Notification.objects.filter(
                     user=request.user,
                     type="trial_ended",
-                    message__contains=app.student.first_name
+                    related_id=app.id
                 ).exists()
 
                 if not already_notified:
@@ -2141,7 +2141,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
                         user=request.user,
                         type="trial_ended",
                         message=f"Trial period ended for {app.student.first_name} {app.student.last_name} — please make a decision.",
-                        
+                        related_id=app.id,
                     )
             data = [
                 {
@@ -2293,8 +2293,48 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
                        "course_name": app.course.name,
                        "course_id": app.course.id,
                    })
-        return Response({"lectures": all_lectures})  
-   
+        return Response({"lectures": all_lectures})
+
+    @action(detail=False, methods=["get"], url_path="recommended")
+    def recommended(self, request):
+        course_id = request.query_params.get("course_id")
+        if not course_id:
+            return Response({"error": "course_id is required"}, status=400)
+
+        student = request.user
+        apps = MentorApplication.objects.filter(
+            course_id=course_id,
+            status__in=["approved", "trial"]
+        ).select_related("student__major")
+
+        results = []
+        for app in apps:
+            mentor = app.student
+            score = _compute_mentor_score(mentor, student)
+
+            CourseMentorRecommendation.objects.update_or_create(
+                student=student,
+                course_id=course_id,
+                mentor=mentor,
+                defaults={"score": score}
+            )
+
+            avg = mentor.received_ratings.aggregate(avg=Avg("rating_value"))["avg"]
+
+            results.append({
+                "id": mentor.id,
+                "name": f"{mentor.first_name} {mentor.last_name}",
+                "major": mentor.major.name if mentor.major else "",
+                "image": mentor.image,
+                "status": app.status,
+                "score": score,
+                "avg_rating": round(avg, 1) if avg else None,
+            })
+
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return Response(results)
+
+
 class SummaryViewSet(viewsets.ModelViewSet):
     queryset = Summary.objects.all()
     serializer_class=SummarySerializer
@@ -2383,6 +2423,8 @@ class SummaryViewSet(viewsets.ModelViewSet):
             active_version = s.versions.filter(is_active=True).first()
             ratings_data = []
             avg_rating = None
+            review_notes = None
+            reviewed_at = None
 
             if active_version:
                 ratings = active_version.ratings.all()
@@ -2397,6 +2439,11 @@ class SummaryViewSet(viewsets.ModelViewSet):
                 if ratings.exists():
                     avg_rating = round(sum(r.rating_value for r in ratings) / ratings.count(), 2)
 
+                latest_review = active_version.reviews.order_by("-reviewed_at").first()
+                if latest_review:
+                    review_notes = latest_review.notes
+                    reviewed_at = latest_review.reviewed_at
+
             data.append({
                 "id": s.id,
                 "title": s.title,
@@ -2404,7 +2451,11 @@ class SummaryViewSet(viewsets.ModelViewSet):
                 "status": s.status,
                 "created_at": s.created_at,
                 "avg_rating": avg_rating,
-                "ratings": ratings_data
+                "ratings": ratings_data,
+                "version_number": active_version.version_number if active_version else 1,
+                "file_url": active_version.file_path.url if active_version and active_version.file_path else None,
+                "review_notes": review_notes,
+                "reviewed_at": reviewed_at,
             })
 
         return Response(data, status=200)
@@ -2416,26 +2467,33 @@ class SummaryViewSet(viewsets.ModelViewSet):
     def pending_summaries(self, request):
         user = request.user
 
-        # السوبرفايزر فقط
-        # ✅ فلترة حسب major بدل supervisor
         summaries = Summary.objects.filter(
             lecture__course_offering__course__major=user.major,
-            
+            status__in=["pending", "under_review"],
         ).order_by("-created_at")
 
-        data = [
-        {
-            "id": s.id,
-            "title": s.title,
-            "status": s.status,
-            "created_at": s.created_at,
-            "file": s.file.url if s.file else None,
-            "mentor_name": f"{s.student.first_name} {s.student.last_name}",
-            "lecture_title": s.lecture.title if s.lecture else None,
-            "course_name": s.lecture.course_offering.course.name if s.lecture else None,
-        }
-        for s in summaries
-       ]
+        data = []
+        for s in summaries:
+            active_version = s.versions.filter(is_active=True).first()
+            prev_version = s.versions.filter(is_active=False).order_by("-version_number").first()
+            latest_review = None
+            if active_version:
+                latest_review = active_version.reviews.order_by("-reviewed_at").first()
+            data.append({
+                "id": s.id,
+                "title": s.title,
+                "status": s.status,
+                "created_at": s.created_at,
+                "file": s.file.url if s.file else None,
+                "mentor_name": f"{s.student.first_name} {s.student.last_name}",
+                "lecture_title": s.lecture.title if s.lecture else None,
+                "course_name": s.lecture.course_offering.course.name if s.lecture else None,
+                "active_version_number": active_version.version_number if active_version else 1,
+                "active_file_url": active_version.file_path.url if active_version and active_version.file_path else None,
+                "prev_file_url": prev_version.file_path.url if prev_version and prev_version.file_path else None,
+                "prev_version_number": prev_version.version_number if prev_version else None,
+                "review_notes": latest_review.notes if latest_review else None,
+            })
         return Response(data, status=200)
 
 
@@ -2448,27 +2506,53 @@ class SummaryViewSet(viewsets.ModelViewSet):
         except Summary.DoesNotExist:
             return Response({"error": "Summary not found"}, status=404)
 
-        # تأكد إنو السوبرفايزر هو المسؤول عن المادة
         if summary.lecture.course_offering.course.major != supervisor.major:
             return Response({"error": "Not authorized"}, status=403)
 
         status_value = request.data.get("status")  # approved / rejected
         notes = request.data.get("notes", "")
 
-        # تحديث حالة الملخص
-        summary.status = status_value
-        summary.save()
-
-        # النسخة الفعّالة
         active_version = summary.versions.filter(is_active=True).first()
 
-        # إنشاء مراجعة
+        if status_value == "rejected":
+            prev_version = summary.versions.filter(is_active=False).order_by("-version_number").first()
+            if prev_version:
+                # Resubmission rejected → restore old version, summary stays "approved"
+                if active_version:
+                    active_version.is_active = False
+                    active_version.save()
+                prev_version.is_active = True
+                prev_version.save()
+                summary.status = "approved"
+            else:
+                # First-ever submission rejected
+                summary.status = "rejected"
+        else:
+            summary.status = status_value
+
+        summary.save()
+
         SummaryReview.objects.create(
             summary_version=active_version,
             supervisor=supervisor,
             status=status_value,
             notes=notes
         )
+
+        # Notify mentor
+        mentor = summary.student
+        if status_value == "approved":
+            send_notification(
+                mentor,
+                "summary_approved",
+                f"Your summary '{summary.title}' has been approved by the supervisor."
+            )
+        else:
+            send_notification(
+                mentor,
+                "summary_rejected",
+                f"Your summary '{summary.title}' was rejected. Notes: {notes}" if notes else f"Your summary '{summary.title}' was rejected."
+            )
 
         return Response({"message": "Review submitted"}, status=200)
 
@@ -2481,27 +2565,59 @@ class SummaryViewSet(viewsets.ModelViewSet):
         except Summary.DoesNotExist:
             return Response({"error": "Summary not found"}, status=404)
 
-        # 1) تأكد إنو المستخدم هو صاحب الملخص
         if summary.student != user:
             return Response({"error": "Not authorized"}, status=403)
 
-        # 2) تعطيل النسخة الحالية
+        if summary.status == "under_review":
+            return Response({"error": "Summary is currently under review"}, status=400)
+
+        file = request.FILES.get("file")
+        if not file:
+            return Response({"error": "No file provided"}, status=400)
+
+        # Deactivate current version
         summary.versions.filter(is_active=True).update(is_active=False)
 
-        # 3) إنشاء نسخة جديدة
-        new_version = SummaryVersion.objects.create(
+        new_ver = SummaryVersion.objects.create(
             summary=summary,
-            file_path=request.data.get("file"),
+            file_path=file,
             version_number=summary.versions.count() + 1,
             is_active=True
         )
 
-        # 4) إعادة حالة الملخص إلى pending
         summary.status = "pending"
         summary.save()
 
-        return Response({"message": "New version submitted"}, status=201)
+        # Notify supervisors in the same major
+        User = get_user_model()
+        supervisors = User.objects.filter(role="supervisor", major=summary.lecture.course_offering.course.major)
+        for sup in supervisors:
+            send_notification(
+                sup,
+                "summary_new_version",
+                f"Mentor {user.first_name} {user.last_name} submitted a new version of '{summary.title}'."
+            )
+
+        return Response({"message": "New version submitted", "version_number": new_ver.version_number}, status=201)
     
+    @action(detail=True, methods=["post"], url_path="lock")
+    def lock_summary(self, request, pk=None):
+        supervisor = request.user
+        try:
+            summary = Summary.objects.get(id=pk)
+        except Summary.DoesNotExist:
+            return Response({"error": "Summary not found"}, status=404)
+
+        if summary.lecture.course_offering.course.major != supervisor.major:
+            return Response({"error": "Not authorized"}, status=403)
+
+        if summary.status == "under_review":
+            return Response({"error": "Already under review"}, status=409)
+
+        summary.status = "under_review"
+        summary.save()
+        return Response({"message": "Locked for review"}, status=200)
+
     @action(detail=True, methods=["get"], url_path="versions")
     def summary_versions(self, request, pk=None):
         try:
@@ -3039,75 +3155,178 @@ class FCMTokenView(APIView):
         return Response({"message": "Token saved successfully"})
     
 
-class SurveyViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Survey.objects.filter(is_active=True)
+def _compute_mentor_score(mentor, student):
+    # 1. التقييم (max 40 pts)
+    avg = mentor.received_ratings.aggregate(avg=Avg("rating_value"))["avg"] or 0
+    rating_score = (avg / 5) * 40
+
+    # 2. الجلسات الحقيقية (max 30 pts)
+    real_sessions = ChatRoom.objects.filter(
+        mentor=mentor,
+        messages__is_real_session=True
+    ).distinct().count()
+    session_score = min(real_sessions * 2, 30)
+
+    # 3. نسبة الرد (max 20 pts)
+    total_rooms = ChatRoom.objects.filter(mentor=mentor).count()
+    if total_rooms > 0:
+        responded = ChatRoom.objects.filter(
+            mentor=mentor,
+            messages__sender=mentor
+        ).distinct().count()
+        response_score = (responded / total_rooms) * 20
+    else:
+        response_score = 0
+
+    # 4. نفس التخصص (10 pts)
+    major_score = 10 if mentor.major_id and mentor.major_id == student.major_id else 0
+
+    return round(rating_score + session_score + response_score + major_score, 2)
+
+
+class SurveyViewSet(viewsets.ModelViewSet):
+    queryset = Survey.objects.all()
     serializer_class = SurveySerializer
     permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action in ["create", "update", "partial_update", "destroy",
+                           "add_question", "delete_question", "send"]:
+            return [IsAuthenticated(), IsAdmin()]
+        return [IsAuthenticated()]
+
+    def create(self, request, *args, **kwargs):
+        title = request.data.get("title", "").strip()
+        if not title:
+            return Response({"error": "Title is required"}, status=400)
+        survey = Survey.objects.create(title=title, created_by=request.user, is_active=True)
+        return Response({"id": survey.id, "title": survey.title}, status=201)
+
+    def list(self, request, *args, **kwargs):
+        surveys = Survey.objects.all().order_by("-created_at")
+        data = []
+        for s in surveys:
+            is_sent = Notification.objects.filter(type="survey", related_id=s.id).exists()
+            data.append({
+                "id": s.id,
+                "title": s.title,
+                "created_at": s.created_at,
+                "is_active": s.is_active,
+                "is_sent": is_sent,
+                "questions_count": s.questions.count(),
+            })
+        return Response(data)
 
     @action(detail=True, methods=["get"])
     def questions(self, request, pk=None):
         survey = self.get_object()
-        serializer = SurveySerializer(survey)
-        return Response(serializer.data)
+        return Response({
+            "id": survey.id,
+            "title": survey.title,
+            "is_active": survey.is_active,
+            "questions": [
+                {"id": q.id, "text": q.text, "choices": q.choices or []}
+                for q in survey.questions.all()
+            ]
+        })
 
-    @action(detail=True, methods=["post"])
-    def submit(self, request, pk=None):
+    @action(detail=True, methods=["post"], url_path="add-question")
+    def add_question(self, request, pk=None):
         survey = self.get_object()
-        user = request.user
-        answers = request.data.get("answers", [])
+        text = request.data.get("text", "").strip()
+        choices = request.data.get("choices", [])
+        if not text:
+            return Response({"error": "Question text is required"}, status=400)
+        if len(choices) < 2:
+            return Response({"error": "At least 2 choices required"}, status=400)
+        q = SurveyQuestion.objects.create(
+            survey=survey, text=text, choices=choices, question_type="choice"
+        )
+        return Response({"id": q.id, "text": q.text, "choices": q.choices}, status=201)
 
-        for ans in answers:
-            question_id = ans.get("question")
-            answer_text = ans.get("answer")
+    @action(detail=True, methods=["delete"], url_path="delete-question/(?P<question_id>[^/.]+)")
+    def delete_question(self, request, pk=None, question_id=None):
+        survey = self.get_object()
+        try:
+            q = SurveyQuestion.objects.get(id=question_id, survey=survey)
+        except SurveyQuestion.DoesNotExist:
+            return Response({"error": "Question not found"}, status=404)
+        q.delete()
+        return Response({"message": "Question deleted"})
 
-            question = SurveyQuestion.objects.get(id=question_id)
-
-            SurveyAnswer.objects.update_or_create(
-                user=user,
-                question=question,
-                defaults={"answer": answer_text}
+    @action(detail=True, methods=["post"], url_path="send")
+    def send(self, request, pk=None):
+        survey = self.get_object()
+        if not survey.questions.exists():
+            return Response({"error": "Survey has no questions"}, status=400)
+        students = User.objects.filter(role__in=["student", "mentor"], is_active=True)
+        Notification.objects.bulk_create([
+            Notification(
+                user=s,
+                type="survey",
+                message=f"A new survey is available: {survey.title}",
+                related_id=survey.id
             )
+            for s in students
+        ])
+        return Response({"message": f"Survey sent to {students.count()} users"})
 
-        return Response({"message": "Survey submitted successfully"})
-    
+    @action(detail=True, methods=["get"], url_path="results")
+    def results(self, request, pk=None):
+        survey = self.get_object()
+        total_respondents = SurveyAnswer.objects.filter(
+            question__survey=survey
+        ).values("user").distinct().count()
+
+        questions_data = []
+        for q in survey.questions.all():
+            answers = SurveyAnswer.objects.filter(question=q)
+            total = answers.count()
+            counts = {}
+            for ans in answers:
+                counts[ans.answer] = counts.get(ans.answer, 0) + 1
+            questions_data.append({
+                "id": q.id,
+                "text": q.text,
+                "total_answers": total,
+                "choices": [
+                    {
+                        "choice": c,
+                        "count": counts.get(c, 0),
+                        "percentage": round(counts.get(c, 0) / total * 100, 1) if total else 0,
+                    }
+                    for c in (q.choices or [])
+                ]
+            })
+        return Response({
+            "survey_id": survey.id,
+            "title": survey.title,
+            "total_respondents": total_respondents,
+            "questions": questions_data,
+        })
+
     @action(detail=True, methods=["get"])
     def check(self, request, pk=None):
         survey = self.get_object()
-        user = request.user
-
-        # هل المستخدم جاوب على أي سؤال داخل هذا الاستبيان؟
         answered = SurveyAnswer.objects.filter(
-            user=user,
+            user=request.user,
             question__survey=survey
         ).exists()
-
         return Response({"answered": answered})
-    
+
     @action(detail=True, methods=["post"])
     def submit(self, request, pk=None):
         survey = self.get_object()
         user = request.user
-
-        # منع إعادة الإجابة
         if SurveyAnswer.objects.filter(user=user, question__survey=survey).exists():
-            return Response(
-                {"error": "You have already submitted this survey."},
-                status=400
-            )
-
-        answers = request.data.get("answers", [])
-
-        for ans in answers:
+            return Response({"error": "You have already submitted this survey."}, status=400)
+        for ans in request.data.get("answers", []):
             question_id = ans.get("question")
             answer_text = ans.get("answer")
-
-            question = SurveyQuestion.objects.get(id=question_id)
-
-            SurveyAnswer.objects.create(
-                user=user,
-                question=question,
-                answer=answer_text
-            )
-
+            try:
+                q = SurveyQuestion.objects.get(id=question_id, survey=survey)
+            except SurveyQuestion.DoesNotExist:
+                continue
+            SurveyAnswer.objects.create(user=user, question=q, answer=answer_text)
         return Response({"message": "Survey submitted successfully"})
 
