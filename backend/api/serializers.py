@@ -98,7 +98,8 @@ class MajorNamesSerializer(serializers.ModelSerializer):
 class SupervisorCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ["email", "password", "major"]
+        fields = ["id", "email", "password", "major"]
+        read_only_fields = ["id"]
 
     def create(self, validated_data):
         password = validated_data.pop("password")

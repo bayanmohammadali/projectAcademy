@@ -114,11 +114,11 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'academy_db',
-        'USER': 'project_user',
-        'PASSWORD': 'bayan123',
-        'HOST': 'db', 
-        'PORT': 5432,
+        'NAME': os.getenv('DB_NAME', 'academy_db'),
+        'USER': os.getenv('DB_USER', 'project_user'),
+        'PASSWORD': os.getenv('DB_PASSWORD', 'bayan123'),
+        'HOST': os.getenv('DB_HOST', 'db'), 
+        'PORT': int(os.getenv('DB_PORT', 5432)),
     }
 }
 STATIC_URL = '/static/'

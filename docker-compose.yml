@@ -22,5 +22,34 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
+  backend_staging:
+    build: .
+    container_name: academy_backend_staging
+    command: python backend/manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+    ports:
+      - "8001:8000"
+    depends_on:
+      - db_staging
+    environment:
+      DB_HOST: db_staging
+      DB_NAME: academy_staging
+      DB_USER: staging_user
+      DB_PASSWORD: staging123
+      
+  db_staging:
+    image: postgres:15
+    container_name: academy_db_staging
+    environment:
+      POSTGRES_DB: academy_staging
+      POSTGRES_USER: staging_user
+      POSTGRES_PASSWORD: staging123
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_staging_data:/var/lib/postgresql/data    
+
 volumes:
   postgres_data:
+  postgres_staging_data:

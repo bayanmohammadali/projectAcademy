@@ -2,7 +2,9 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from academic.models import Semester
 from users.models import User, Notification
-@receiver(post_save, sender=Semester)   
+from firebase.firebase import send_push_notification
+
+@receiver(post_save, sender=Semester)
 def notify_supervisors_on_new_semester(sender, instance, created, **kwargs):
     if created:
         supervisors = User.objects.filter(role="supervisor")
@@ -11,6 +13,11 @@ def notify_supervisors_on_new_semester(sender, instance, created, **kwargs):
                 user=supervisor,
                 type="semester",
                 message=f"A new semester '{instance.name}' has been opened. Please add your courses."
+            )
+            send_push_notification(
+                supervisor,
+                title="New Semester Opened",
+                body=f"Semester '{instance.name}' has been opened. Please add your courses.",
             )
 
 

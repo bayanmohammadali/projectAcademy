@@ -50,7 +50,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     bio = models.TextField(null=True, blank=True)
 
     is_approved = models.BooleanField(default=False)
-    request_status = models.CharField(max_length=50, default="pending")
+    request_status = models.CharField(max_length=50, default="none")
 
     major = models.ForeignKey(Major, on_delete=models.SET_NULL, null=True, related_name="users")
     university = models.ForeignKey(University, on_delete=models.SET_NULL, null=True, related_name="users", blank=True)
@@ -58,10 +58,17 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_primary_supervisor = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(default=timezone.now)
+    last_seen = models.DateTimeField(null=True, blank=True)
 
     # Django required fields
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
+
+    @property
+    def is_online(self):
+        if not self.last_seen:
+            return False
+        return (timezone.now() - self.last_seen).total_seconds() < 300  # 5 minutes
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = []

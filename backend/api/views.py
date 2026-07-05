@@ -112,6 +112,35 @@ class UserViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
 
+    @action(detail=False, methods=["post"], url_path="ping")
+    def ping(self, request):
+        request.user.last_seen = timezone.now()
+        request.user.save(update_fields=["last_seen"])
+        return Response({"ok": True})
+
+    @action(detail=True, methods=["get"], url_path="online_status")
+    def online_status(self, request, pk=None):
+        try:
+            user = User.objects.get(pk=pk)
+        except User.DoesNotExist:
+            return Response({"error": "Not found"}, status=404)
+        last_seen = user.last_seen
+        is_online = user.is_online
+        if last_seen is None:
+            label = "Offline"
+        elif is_online:
+            label = "Online"
+        else:
+            diff = timezone.now() - last_seen
+            minutes = int(diff.total_seconds() // 60)
+            if minutes < 60:
+                label = f"Last seen {minutes}m ago"
+            elif minutes < 1440:
+                label = f"Last seen {minutes // 60}h ago"
+            else:
+                label = f"Last seen {minutes // 1440}d ago"
+        return Response({"is_online": is_online, "label": label})
+
     @action(detail=False, methods=["get"], url_path="students_and_mentors")
     def students_and_mentors(self, request):
         users = User.objects.filter(role__in=["student", "mentor"])
@@ -333,9 +362,16 @@ class SupervisorViewSet(viewsets.ModelViewSet):
         serializer = SupervisorSerializer(supervisors, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], url_path='check-primary')
     def check_primary(self, request):
-        primary = User.objects.filter(role="supervisor", is_primary_supervisor=True).first()
+        major_id = request.query_params.get('major_id')
+        if not major_id:
+            return Response({"error": "major_id is required"}, status=400)
+        primary = User.objects.filter(
+            role="supervisor",
+            is_primary_supervisor=True,
+            major_id=major_id
+        ).first()
         if primary:
             return Response({
                 "has_primary": True,
@@ -343,12 +379,17 @@ class SupervisorViewSet(viewsets.ModelViewSet):
             })
         return Response({"has_primary": False, "primary": None})
 
-    @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'], url_path='set-primary')
     def set_primary(self, request, pk=None):
         if request.user.role != "admin":
             return Response({"error": "Only admin can set primary supervisor"}, status=403)
-        User.objects.filter(role="supervisor", is_primary_supervisor=True).update(is_primary_supervisor=False)
         supervisor = self.get_object()
+        # نزيل الرئيسي السابق لنفس الفرع فقط
+        User.objects.filter(
+            role="supervisor",
+            is_primary_supervisor=True,
+            major=supervisor.major
+        ).update(is_primary_supervisor=False)
         supervisor.is_primary_supervisor = True
         supervisor.save()
         return Response({"message": f"{supervisor.first_name} {supervisor.last_name} set as primary supervisor"})
@@ -544,8 +585,14 @@ class SemesterViewSet(viewsets.ModelViewSet):
     
 
 class CourseViewSet(viewsets.ModelViewSet):
-    queryset = Course.objects.all()
     serializer_class = CourseSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.role == "supervisor":
+            return Course.objects.filter(major=user.major)
+        return Course.objects.all()
+
     def get_permissions(self):
         if self.request.method in ["GET"]:
             return [IsAuthenticated()]   # أي مستخدم مسجّل
@@ -554,10 +601,10 @@ class CourseViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        course = serializer.save()
+        serializer.save()
         return Response({
             "message": "Course created successfully",
-            "course": course
+            "course": serializer.data
         }, status=status.HTTP_201_CREATED)
 
     def update(self, request, *args, **kwargs):
@@ -745,16 +792,16 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
     def add_and_activate(self, request):
         user = request.user
 
-        # فقط السوبرفايزر الرئيسي
+        # فقط الأدمن أو السوبرفايزر الرئيسي
         if user.role == "supervisor" and not user.is_primary_supervisor:
             return Response(
                 {"error": "Only the primary supervisor can activate courses"},
                 status=403
             )
 
-        if user.role not in  "admin":
+        if user.role not in ["admin", "supervisor"]:
             return Response(
-                {"error": "Only admins can activate courses"},
+                {"error": "Not authorized to activate courses"},
                 status=403
             )
 
@@ -774,6 +821,17 @@ class CourseOfferingViewSet(viewsets.ModelViewSet):
 
         offering.is_active = True
         offering.save()
+
+        # خلق غروب النظري والعملي تلقائياً إذا ما موجودين
+        for group_name in ["Theory", "Lab"]:
+            group, g_created = Group.objects.get_or_create(
+                name=group_name,
+                course_offering=offering,
+                defaults={"description": group_name, "created_by": user}
+            )
+            if g_created:
+                for enrollment in offering.enrollments.all():
+                    GroupMember.objects.get_or_create(group=group, user=enrollment.student)
 
         return Response({
             "message": "Course added and activated successfully",
@@ -1577,6 +1635,11 @@ class GroupViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["get"], url_path="messages")
     def group_messages(self, request, pk=None):
      group = self.get_object()
+     user = request.user
+     # Auto-join if enrolled in this course
+     if not group.members.filter(user=user).exists():
+         if Enrollment.objects.filter(student=user, course_offering=group.course_offering).exists():
+             GroupMember.objects.get_or_create(group=group, user=user)
      messages = group.messages.all().order_by("created_at")
 
      data = []
@@ -1644,21 +1707,84 @@ class GroupViewSet(viewsets.ModelViewSet):
     def my_groups(self, request, course_id=None):
         user = request.user
 
-        groups = Group.objects.filter(
-            course_offering__course_id=course_id,
-            members__user=user
-        )
+        # Student must be enrolled in this course
+        is_enrolled = Enrollment.objects.filter(
+            student=user,
+            course_offering__course_id=course_id
+        ).exists()
+        if not is_enrolled:
+            return Response([])
+
+        groups = Group.objects.filter(course_offering__course_id=course_id).distinct()
         data = []
         for g in groups:
+            is_member = g.members.filter(user=user).exists()
             data.append({
                 "id": g.id,
                 "name": g.name,
                 "description": g.description,
                 "is_active": g.course_offering.is_active,
+                "is_member": is_member,
+                "members_count": g.members.count(),
                 "created_at": g.created_at,
             })
 
         return Response(data)
+
+    @action(detail=True, methods=["post"], url_path="join")
+    def join_group(self, request, pk=None):
+        group = self.get_object()
+        user = request.user
+        is_enrolled = Enrollment.objects.filter(
+            student=user,
+            course_offering=group.course_offering
+        ).exists()
+        if not is_enrolled:
+            return Response({"error": "Not enrolled in this course"}, status=403)
+        GroupMember.objects.get_or_create(group=group, user=user)
+        return Response({"message": "Joined group"})
+
+    @action(detail=True, methods=["post"], url_path="leave")
+    def leave_group(self, request, pk=None):
+        group = self.get_object()
+        GroupMember.objects.filter(group=group, user=request.user).delete()
+        return Response({"message": "Left group"})
+
+    @action(detail=False, methods=["post"], url_path="create_for_course")
+    def create_for_course(self, request):
+        user = request.user
+        course_id = request.data.get("course_id")
+        name = request.data.get("name", "").strip()
+        description = request.data.get("description", "").strip()
+
+        if not course_id or not name:
+            return Response({"error": "course_id and name are required"}, status=400)
+
+        # Only approved/trial mentors or supervisors/admins can create groups
+        is_mentor = MentorApplication.objects.filter(
+            student=user,
+            course_id=course_id,
+            status__in=["approved", "trial"]
+        ).exists()
+        if not is_mentor and user.role not in ["supervisor", "admin"]:
+            return Response({"error": "Only mentors for this course can create groups"}, status=403)
+
+        offering = CourseOffering.objects.filter(
+            course_id=course_id,
+            semester__is_active=True
+        ).first()
+        if not offering:
+            return Response({"error": "No active course offering found"}, status=404)
+
+        group = Group.objects.create(
+            name=name,
+            description=description,
+            course_offering=offering,
+            created_by=user
+        )
+        # Auto-add creator as member
+        GroupMember.objects.create(group=group, user=user)
+        return Response({"id": group.id, "name": group.name})
 
 class GroupMessageViewSet(viewsets.ModelViewSet):
     queryset = GroupMessage.objects.all()
@@ -2307,10 +2433,13 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
             status__in=["approved", "trial"]
         ).select_related("student__major")
 
+        mentor_ids = [app.student_id for app in apps]
+        any_rated = MentorRating.objects.filter(mentor_id__in=mentor_ids).exists()
+
         results = []
         for app in apps:
             mentor = app.student
-            score = _compute_mentor_score(mentor, student)
+            score = _compute_mentor_score(mentor, student) if any_rated else 0
 
             CourseMentorRecommendation.objects.update_or_create(
                 student=student,
@@ -2930,9 +3059,15 @@ class ChatRoomViewSet(viewsets.ModelViewSet):
         mentor_id = request.data.get("mentor_id")
 
         try:
-            mentor = User.objects.get(id=mentor_id, role="mentor")
+            mentor = User.objects.get(id=mentor_id)
         except User.DoesNotExist:
             return Response({"error": "Mentor not found"}, status=404)
+
+        is_mentor = mentor.role == "mentor" or MentorApplication.objects.filter(
+            student=mentor, status__in=["approved", "trial"]
+        ).exists()
+        if not is_mentor:
+            return Response({"error": "User is not a mentor"}, status=403)
 
         room, created = ChatRoom.objects.get_or_create(student=student, mentor=mentor)
 
@@ -3069,7 +3204,11 @@ class ChatRoomViewSet(viewsets.ModelViewSet):
         user = request.user
         data = []
 
-        if user.role == "mentor":
+        is_mentor = user.role == "mentor" or MentorApplication.objects.filter(
+            student=user, status__in=["approved", "trial"]
+        ).exists()
+
+        if is_mentor:
             rooms = ChatRoom.objects.filter(mentor=user).select_related("student")
             for room in rooms:
                 last_msg = room.messages.order_by("-created_at").first()
@@ -3178,10 +3317,7 @@ def _compute_mentor_score(mentor, student):
     else:
         response_score = 0
 
-    # 4. نفس التخصص (10 pts)
-    major_score = 10 if mentor.major_id and mentor.major_id == student.major_id else 0
-
-    return round(rating_score + session_score + response_score + major_score, 2)
+    return round(rating_score + session_score + response_score, 2)
 
 
 class SurveyViewSet(viewsets.ModelViewSet):
