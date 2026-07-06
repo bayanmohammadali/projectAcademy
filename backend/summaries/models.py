@@ -25,6 +25,14 @@ class Summary(models.Model):
         related_name="submitted_summaries"
     )
 
+    locked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="locked_summaries"
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

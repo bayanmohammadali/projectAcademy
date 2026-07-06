@@ -719,7 +719,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if user.role == 'admin':
-            return Notification.objects.filter(user=user).order_by("-created_at")
+            return Notification.objects.all().order_by("-created_at")
         return Notification.objects.filter(user=user).order_by("-created_at")
     
     @action(detail=True, methods=['post'])
@@ -2206,17 +2206,18 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
             course__major_id=request.user.major_id 
         )
 
-        data = [
-            {
+        data = []
+        for app in apps:
+            avg = app.student.received_ratings.aggregate(avg=Avg("rating_value"))["avg"]
+            data.append({
                 "id": app.student.id,
-                "application_id": app.id,  # ← أضيفي هاد
+                "application_id": app.id,
                 "name": f"{app.student.first_name} {app.student.last_name}",
                 "email": app.student.email,
                 "course": app.course.name if app.course else None,
-                "trial_end_date": app.trial_end_date
-            }
-            for app in apps
-        ]
+                "trial_end_date": app.trial_end_date,
+                "rating": round(avg, 1) if avg is not None else 0.0,
+            })
 
         return Response({"trial_mentors": data})
    
@@ -2598,7 +2599,6 @@ class SummaryViewSet(viewsets.ModelViewSet):
 
         summaries = Summary.objects.filter(
             lecture__course_offering__course__major=user.major,
-            status__in=["pending", "under_review"],
         ).order_by("-created_at")
 
         data = []
@@ -2659,6 +2659,7 @@ class SummaryViewSet(viewsets.ModelViewSet):
         else:
             summary.status = status_value
 
+        summary.locked_by = None
         summary.save()
 
         SummaryReview.objects.create(
@@ -2740,10 +2741,19 @@ class SummaryViewSet(viewsets.ModelViewSet):
         if summary.lecture.course_offering.course.major != supervisor.major:
             return Response({"error": "Not authorized"}, status=403)
 
+        if summary.status in ["approved", "rejected"]:
+            return Response({"message": "Already reviewed"}, status=200)
+
         if summary.status == "under_review":
-            return Response({"error": "Already under review"}, status=409)
+            if summary.locked_by is None or summary.locked_by == supervisor:
+                summary.locked_by = supervisor
+                summary.save()
+                return Response({"message": "Locked for review"}, status=200)
+            else:
+                return Response({"error": "Already under review by another supervisor"}, status=409)
 
         summary.status = "under_review"
+        summary.locked_by = supervisor
         summary.save()
         return Response({"message": "Locked for review"}, status=200)
 
