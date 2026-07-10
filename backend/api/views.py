@@ -465,12 +465,19 @@ class SemesterViewSet(viewsets.ModelViewSet):
         }, status=status.HTTP_201_CREATED)
 
     def perform_update(self, serializer):
-        # نحفظ الفصل
         instance = serializer.save()
-
-        # إذا تم تفعيل هذا الفصل → نطفي كل الفصول الثانية
         if instance.is_active:
             Semester.objects.exclude(id=instance.id).update(is_active=False)
+
+    def destroy(self, request, *args, **kwargs):
+        from django.db.models import ProtectedError
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {"error": "Cannot delete this semester because it has course offerings. Archive it instead."},
+                status=400
+            )
 
     def update(self, request, *args, **kwargs):
         response = super().update(request, *args, **kwargs)
@@ -983,11 +990,46 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
                 )
         return Enrollment.objects.filter(student=user)   
     
+    @action(detail=False, methods=["post"], url_path="admin_enroll")
+    def admin_enroll(self, request):
+        if request.user.role != "admin":
+            return Response({"error": "Not authorized"}, status=403)
+        student_id = request.data.get("student")
+        offering_id = request.data.get("course_offering")
+        if not student_id or not offering_id:
+            return Response({"error": "student and course_offering are required"}, status=400)
+        try:
+            student = User.objects.get(id=student_id)
+        except User.DoesNotExist:
+            return Response({"error": "Student not found"}, status=404)
+        try:
+            offering = CourseOffering.objects.get(id=offering_id)
+        except CourseOffering.DoesNotExist:
+            return Response({"error": "Course offering not found"}, status=404)
+        enrollment, created = Enrollment.objects.get_or_create(
+            student=student,
+            course_offering=offering,
+        )
+        if not created:
+            return Response({"error": "Student already enrolled in this course"}, status=400)
+        return Response({"message": "Enrollment added successfully", "enrollment_id": enrollment.id}, status=201)
+
     @action(detail=False, methods=["post"], url_path="register")
     def register_in_active_semester(self, request):
         course_id = request.data.get("course")
         if not course_id:
             return Response({"error": "Course ID is required"}, status=400)
+
+        if request.user.role == "admin":
+            student_id = request.data.get("student_id")
+            if not student_id:
+                return Response({"error": "student_id is required for admin enrollment"}, status=400)
+            try:
+                student = User.objects.get(id=student_id)
+            except User.DoesNotExist:
+                return Response({"error": "Student not found"}, status=404)
+        else:
+            student = request.user
 
     # 1) نجيب الفصل النشط
         semester = Semester.objects.filter(is_active=True).first()
@@ -1006,12 +1048,9 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
     # 3) نسجّل الطالب
         enrollment, created = Enrollment.objects.get_or_create(
-            student=request.user,
+            student=student,
             course_offering=offering
         )
-
-        student = request.user
-
 
         return Response({
             "message": "Course registered successfully",
@@ -1440,14 +1479,19 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
                 status=403
             )
 
-        # 3) نجيب كل الـ course_offerings السابقة لنفس المادة
-        previous_offerings = CourseOffering.objects.filter(
-            course_id=course_id
-        ).exclude(id=enrollment.course_offering_id)
+        # 3) إذا الـ enrollment من فصل نشط → أرشيف الفصول السابقة
+        #    إذا الـ enrollment من فصل ماضٍ → محتوى ذاك الفصل تحديداً
+        if enrollment.course_offering.semester.is_active:
+            past_offerings = CourseOffering.objects.filter(
+                course_id=course_id,
+                semester__is_active=False
+            ).order_by("-semester__start_date")
+        else:
+            past_offerings = [enrollment.course_offering]
 
         archive_data = []
 
-        for offering in previous_offerings:
+        for offering in past_offerings:
             lectures = Lecture.objects.filter(course_offering=offering)
             summaries = Summary.objects.filter(lecture__course_offering=offering, status="approved")
 
@@ -2300,7 +2344,14 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
         app.is_processing = True
         app.processing_by_id = user.id
         app.save()
-    
+
+            # ✅ أضيفي حساب الـ rating
+        from django.db.models import Avg
+        avg_rating = app.student.received_ratings.aggregate(
+             Avg("rating_value")
+         )["rating_value__avg"]
+        avg_rating = round(avg_rating, 1) if avg_rating else 0.0
+ 
         return Response({
             "application_id": app.id,
             "name": f"{app.student.first_name} {app.student.last_name}",
@@ -2309,7 +2360,7 @@ class MentorApplicationViewSet(viewsets.ModelViewSet):
             "trial_end_date": app.trial_end_date,
             "motivation_text": app.motivation_text,
             "experience_text": app.experience_text,
-            "rating": None,
+            "rating": avg_rating,
        })
 
     @action(detail=False, methods=["get"], url_path="profile")

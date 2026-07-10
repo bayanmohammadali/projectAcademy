@@ -42,7 +42,7 @@ class CourseOffering(models.Model):
 
     semester = models.ForeignKey(
         Semester,
-        on_delete=models.CASCADE,
+        on_delete=models.PROTECT,
         related_name="course_offerings"
     )
 
